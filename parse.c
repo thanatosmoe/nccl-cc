@@ -12,6 +12,13 @@ static Node *new_unary(NodeKind kind, Node *expr) {
   return node;
 }
 
+static Node *new_binary(NodeKind kind, Node *lhs, Node *rhs) {
+  Node *node = new_node(kind);
+  node->lhs = lhs;
+  node->rhs = rhs;
+  return node;
+}
+
 static Node *new_num(long val) {
   Node *node = new_node(ND_NUM);
   node->val = val;
@@ -19,12 +26,46 @@ static Node *new_num(long val) {
 }
 
 static Node *expr(Token **rest, Token *tok);
+static Node *add(Token **rest, Token *tok);
+static Node *mul(Token **rest, Token *tok);
 static Node *unary(Token **rest, Token *tok);
 static Node *primary(Token **rest, Token *tok);
 
-// expr = unary
+// expr = add
 static Node *expr(Token **rest, Token *tok) {
-  return unary(rest, tok);
+  return add(rest, tok);
+}
+
+// add = mul ("+" mul | "-" mul)*
+static Node *add(Token **rest, Token *tok) {
+  Node *node = mul(&tok, tok);
+  for (;;) {
+    if (equal(tok, "+"))
+      node = new_binary(ND_ADD, node, mul(&tok, tok->next));
+    else if (equal(tok, "-"))
+      node = new_binary(ND_SUB, node, mul(&tok, tok->next));
+    else
+      break;
+  }
+  *rest = tok;
+  return node;
+}
+
+// mul = unary ("*" unary | "/" unary | "%" unary)*
+static Node *mul(Token **rest, Token *tok) {
+  Node *node = unary(&tok, tok);
+  for (;;) {
+    if (equal(tok, "*"))
+      node = new_binary(ND_MUL, node, unary(&tok, tok->next));
+    else if (equal(tok, "/"))
+      node = new_binary(ND_DIV, node, unary(&tok, tok->next));
+    else if (equal(tok, "%"))
+      node = new_binary(ND_MOD, node, unary(&tok, tok->next));
+    else
+      break;
+  }
+  *rest = tok;
+  return node;
 }
 
 // unary = ("+" | "-" | "!" | "~") unary | primary

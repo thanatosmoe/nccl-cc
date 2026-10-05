@@ -64,6 +64,11 @@ typedef enum {
   ND_NEG,    // Unary minus
   ND_NOT,    // Logical negation
   ND_BITNOT, // Bitwise complement
+  ND_ADD,    // +
+  ND_SUB,    // -
+  ND_MUL,    // *
+  ND_DIV,    // /
+  ND_MOD,    // %
 } NodeKind;
 
 // AST node type
