@@ -209,6 +209,17 @@ assert 9 'int f(int x) { if (x > 0) return 5; return 9; } int main() { return f(
 assert 7 'int g; int set(int x) { g = x; return 0; } int main() { set(7); return g; }'
 assert 6 'int f(int a, int b, int c) { int d = a + b; return d + c; } int main() { return f(1, 2, 3); }'
 
+# step 11: recursion
+assert 120 'int fact(int n) { if (n <= 1) return 1; return n * fact(n - 1); } int main() { return fact(5); }'
+assert 24 'int fact(int n) { if (n <= 1) return 1; return n * fact(n - 1); } int main() { return fact(4); }'
+assert 1 'int fact(int n) { if (n <= 1) return 1; return n * fact(n - 1); } int main() { return fact(0); }'
+assert 55 'int fib(int n) { if (n < 2) return n; return fib(n-1) + fib(n-2); } int main() { return fib(10); }'
+assert 89 'int fib(int n) { if (n < 2) return n; return fib(n-1) + fib(n-2); } int main() { return fib(11); }'
+assert 210 'int sum(int n) { if (n == 0) return 0; return n + sum(n - 1); } int main() { return sum(20); }'
+assert 9 'int ack(int m, int n) { if (m == 0) return n + 1; if (n == 0) return ack(m - 1, 1); return ack(m - 1, ack(m, n - 1)); } int main() { return ack(2, 3); }'
+assert 1 'int is_odd(int n) { if (n == 0) return 0; return is_even(n - 1); } int is_even(int n) { if (n == 0) return 1; return is_odd(n - 1); } int main() { return is_even(10); }'
+assert 1 'int is_odd(int n) { if (n == 0) return 0; return is_even(n - 1); } int is_even(int n) { if (n == 0) return 1; return is_odd(n - 1); } int main() { return is_odd(7); }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
 assert_fail 'int main() { return -; }'
