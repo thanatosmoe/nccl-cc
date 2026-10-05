@@ -26,14 +26,100 @@ static Node *new_num(long val) {
 }
 
 static Node *expr(Token **rest, Token *tok);
+static Node *logor(Token **rest, Token *tok);
+static Node *logand(Token **rest, Token *tok);
+static Node *bitor(Token **rest, Token *tok);
+static Node *bitxor(Token **rest, Token *tok);
+static Node *bitand(Token **rest, Token *tok);
+static Node *equality(Token **rest, Token *tok);
+static Node *relational(Token **rest, Token *tok);
 static Node *add(Token **rest, Token *tok);
 static Node *mul(Token **rest, Token *tok);
 static Node *unary(Token **rest, Token *tok);
 static Node *primary(Token **rest, Token *tok);
 
-// expr = add
+// expr = logor
 static Node *expr(Token **rest, Token *tok) {
-  return add(rest, tok);
+  return logor(rest, tok);
+}
+
+// logor = logand ("||" logand)*
+static Node *logor(Token **rest, Token *tok) {
+  Node *node = logand(&tok, tok);
+  while (equal(tok, "||"))
+    node = new_binary(ND_LOGOR, node, logand(&tok, tok->next));
+  *rest = tok;
+  return node;
+}
+
+// logand = bitor ("&&" bitor)*
+static Node *logand(Token **rest, Token *tok) {
+  Node *node = bitor(&tok, tok);
+  while (equal(tok, "&&"))
+    node = new_binary(ND_LOGAND, node, bitor(&tok, tok->next));
+  *rest = tok;
+  return node;
+}
+
+// bitor = bitxor ("|" bitxor)*
+static Node *bitor(Token **rest, Token *tok) {
+  Node *node = bitxor(&tok, tok);
+  while (equal(tok, "|"))
+    node = new_binary(ND_BITOR, node, bitxor(&tok, tok->next));
+  *rest = tok;
+  return node;
+}
+
+// bitxor = bitand ("^" bitand)*
+static Node *bitxor(Token **rest, Token *tok) {
+  Node *node = bitand(&tok, tok);
+  while (equal(tok, "^"))
+    node = new_binary(ND_BITXOR, node, bitand(&tok, tok->next));
+  *rest = tok;
+  return node;
+}
+
+// bitand = equality ("&" equality)*
+static Node *bitand(Token **rest, Token *tok) {
+  Node *node = equality(&tok, tok);
+  while (equal(tok, "&"))
+    node = new_binary(ND_BITAND, node, equality(&tok, tok->next));
+  *rest = tok;
+  return node;
+}
+
+// equality = relational ("==" relational | "!=" relational)*
+static Node *equality(Token **rest, Token *tok) {
+  Node *node = relational(&tok, tok);
+  for (;;) {
+    if (equal(tok, "=="))
+      node = new_binary(ND_EQ, node, relational(&tok, tok->next));
+    else if (equal(tok, "!="))
+      node = new_binary(ND_NE, node, relational(&tok, tok->next));
+    else
+      break;
+  }
+  *rest = tok;
+  return node;
+}
+
+// relational = add ("<" add | "<=" add | ">" add | ">=" add)*
+static Node *relational(Token **rest, Token *tok) {
+  Node *node = add(&tok, tok);
+  for (;;) {
+    if (equal(tok, "<"))
+      node = new_binary(ND_LT, node, add(&tok, tok->next));
+    else if (equal(tok, "<="))
+      node = new_binary(ND_LE, node, add(&tok, tok->next));
+    else if (equal(tok, ">"))
+      node = new_binary(ND_LT, add(&tok, tok->next), node);
+    else if (equal(tok, ">="))
+      node = new_binary(ND_LE, add(&tok, tok->next), node);
+    else
+      break;
+  }
+  *rest = tok;
+  return node;
 }
 
 // add = mul ("+" mul | "-" mul)*

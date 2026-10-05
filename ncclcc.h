@@ -69,6 +69,15 @@ typedef enum {
   ND_MUL,    // *
   ND_DIV,    // /
   ND_MOD,    // %
+  ND_EQ,     // ==
+  ND_NE,     // !=
+  ND_LT,     // <
+  ND_LE,     // <=
+  ND_BITAND, // &
+  ND_BITOR,  // |
+  ND_BITXOR, // ^
+  ND_LOGAND, // &&
+  ND_LOGOR,  // ||
 } NodeKind;
 
 // AST node type
