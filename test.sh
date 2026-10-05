@@ -345,6 +345,73 @@ int main() { return TWICE; }' twice.h '#ifndef TWICE_H
 #define TWICE 8
 #endif'
 
+# step 17: complete C subset
+# sizeof
+assert 8 'int main() { return sizeof(int); }'
+assert 1 'int main() { return sizeof(char); }'
+assert 8 'int main() { int x; return sizeof(x); }'
+assert 24 'int main() { int a[3]; return sizeof(a); }'
+assert 8 'int main() { int *p; return sizeof(p); }'
+assert 8 'int main() { int a[3]; return sizeof(a[0]); }'
+# casts
+assert 65 'int main() { return (char)321; }'
+assert 1 'int main() { return (char)255 < 0; }'
+assert 0 'int main() { return (char)127 < 0; }'
+assert 3 'int main() { int x = 3; char c = (char)x; return c; }'
+# typedef
+assert 3 'typedef int myint; int main() { myint x = 3; return x; }'
+assert 24 'typedef int arr3[3]; int main() { arr3 a; return sizeof(a); }'
+assert 7 'typedef struct { int x; int y; } Point; int main() { Point p; p.x=3; p.y=4; return p.x+p.y; }'
+# enum
+assert 0 'enum { A, B, C }; int main() { return A; }'
+assert 2 'enum { A, B, C }; int main() { return C; }'
+assert 5 'enum { A = 5, B }; int main() { return A; }'
+assert 6 'enum { A = 5, B }; int main() { return B; }'
+assert 3 'enum { A = 1, B = A + 2 }; int main() { return B; }'
+assert 12 'enum Color { RED, GREEN, BLUE }; int main() { return BLUE + 10; }'
+# shift operators
+assert 8 'int main() { return 1 << 3; }'
+assert 2 'int main() { return 16 >> 3; }'
+assert 8 'int main() { return 1 + 1 << 2; }'
+# compound assignment
+assert 5 'int main() { int x = 3; x += 2; return x; }'
+assert 1 'int main() { int x = 3; x -= 2; return x; }'
+assert 6 'int main() { int x = 3; x *= 2; return x; }'
+assert 2 'int main() { int x = 5; x /= 2; return x; }'
+assert 1 'int main() { int x = 5; x %= 2; return x; }'
+assert 8 'int main() { int x = 1; x <<= 3; return x; }'
+assert 1 'int main() { int x = 8; x >>= 3; return x; }'
+assert 3 'int main() { int x = 1; x |= 2; return x; }'
+assert 2 'int main() { int x = 3; x &= 2; return x; }'
+assert 3 'int main() { int x = 1; x ^= 2; return x; }'
+assert 7 'int main() { int x = 3; x += 2; x *= 2; x -= 3; return x; }'
+# increment / decrement
+assert 4 'int main() { int x = 3; x++; return x; }'
+assert 3 'int main() { int x = 3; x--; return x + 1; }'
+assert 5 'int main() { int x = 3; return ++x + 1; }'
+assert 4 'int main() { int x = 3; return x++ + 1; }'
+assert 4 'int main() { int x = 3; int y = x++; return y + 1; }'
+assert 6 'int main() { int i = 0; int s = 0; while (i < 3) { s = s + i; i++; } return s + 3; }'
+assert 6 'int main() { int i = 0; int s = 0; for (i = 0; i < 3; i++) s += i; return s + 3; }'
+assert 2 'int main() { int a[3]; int *p = a; *p++ = 2; return a[0]; }'
+assert 16 'int main() { int a[4]; int *p = a; *p++ = 1; *p++ = 4; *p++ = 9; *p = 16; return a[3]; }'
+# comma operator
+assert 3 'int main() { int x; return (x = 1, x + 2); }'
+assert 5 'int main() { int a = 0; int b = 0; return (a = 2, b = 3, a + b); }'
+# do-while
+assert 10 'int main() { int i = 0; int s = 0; do { s += i; i++; } while (i < 5); return s; }'
+assert 1 'int main() { int i = 10; do { i++; } while (0); return i - 10; }'
+# switch
+assert 2 'int main() { int x = 2; switch (x) { case 1: return 1; case 2: return 2; default: return 3; } }'
+assert 3 'int main() { int x = 9; switch (x) { case 1: return 1; case 2: return 2; default: return 3; } }'
+assert 5 'int main() { int x = 3; int r = 0; switch (x) { case 1: r = 1; break; case 3: r = 5; break; default: r = 9; } return r; }'
+assert 6 'int main() { int x = 1; int r = 0; switch (x) { case 1: r += 1; case 2: r += 2; case 3: r += 3; break; default: r = 100; } return r; }'
+assert 4 'int main() { int i = 0; int r = 0; for (i = 0; i < 5; i++) { switch (i) { case 2: r += 1; break; case 3: r += 2; break; default: break; } } return r + 1; }'
+# void / type qualifiers
+assert 3 'void f() { } int main() { f(); return 3; }'
+assert 8 'int main() { unsigned int x = 8; return x; }'
+assert 5 'int main() { long x = 5; return x; }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
 assert_fail 'int main() { return -; }'

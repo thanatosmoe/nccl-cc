@@ -6,13 +6,39 @@ static int depth;
 #define MAX_LOOP 256
 static int brk_labels[MAX_LOOP];
 static int cont_labels[MAX_LOOP];
-static int loop_depth;
+static int brk_depth;
+static int cont_depth;
 
 static char *current_fn;
 
 static int count(void) {
   static int i = 1;
   return i++;
+}
+
+// Collects the case labels of a switch body and assigns each a unique label.
+static void collect_cases(Node *node, Node ***arr, int *n, int *default_label) {
+  if (!node)
+    return;
+
+  switch (node->kind) {
+  case ND_CASE: {
+    bool is_default = (node->label == -1);
+    node->label = count();
+    if (is_default)
+      *default_label = node->label;
+    *arr = realloc(*arr, sizeof(Node *) * (*n + 1));
+    (*arr)[(*n)++] = node;
+    collect_cases(node->lhs, arr, n, default_label);
+    return;
+  }
+  case ND_BLOCK:
+    for (Node *x = node->body; x; x = x->next)
+      collect_cases(x, arr, n, default_label);
+    return;
+  default:
+    return;
+  }
 }
 
 static void push(void) {
@@ -40,7 +66,7 @@ static void load(Type *ty) {
   if (ty->kind == TY_ARRAY || ty->kind == TY_STRUCT)
     return; // Aggregates evaluate to their address.
   if (ty->size == 1)
-    fprintf(out, "  movsbl (%%rax), %%eax\n");
+    fprintf(out, "  movsbq (%%rax), %%rax\n");
   else
     fprintf(out, "  mov (%%rax), %%rax\n");
 }
@@ -170,6 +196,41 @@ static void gen_expr(Node *node) {
     fprintf(out, ".L.end.%d:\n", c);
     return;
   }
+  case ND_CAST:
+    gen_expr(node->lhs);
+    if (node->ty->size == 1)
+      fprintf(out, "  movsbq %%al, %%rax\n");
+    return;
+  case ND_COMMA:
+    gen_expr(node->lhs);
+    gen_expr(node->rhs);
+    return;
+  case ND_PRE_INC:
+  case ND_PRE_DEC: {
+    int step = node->lhs->ty->base ? node->lhs->ty->base->size : 1;
+    gen_addr(node->lhs);
+    push();
+    load(node->lhs->ty);
+    fprintf(out, node->kind == ND_PRE_INC ? "  add $%d, %%rax\n" : "  sub $%d, %%rax\n",
+            step);
+    pop("%rdi");
+    store(node->lhs->ty);
+    return;
+  }
+  case ND_POST_INC:
+  case ND_POST_DEC: {
+    int step = node->lhs->ty->base ? node->lhs->ty->base->size : 1;
+    gen_addr(node->lhs);
+    push();
+    load(node->lhs->ty);
+    fprintf(out, "  mov %%rax, %%rcx\n");
+    fprintf(out, node->kind == ND_POST_INC ? "  add $%d, %%rax\n" : "  sub $%d, %%rax\n",
+            step);
+    pop("%rdi");
+    store(node->lhs->ty);
+    fprintf(out, "  mov %%rcx, %%rax\n");
+    return;
+  }
   case ND_NEG:
     gen_expr(node->lhs);
     fprintf(out, "  neg %%rax\n");
@@ -243,6 +304,14 @@ static void gen_expr(Node *node) {
     fprintf(out, "  idiv %%rdi\n");
     fprintf(out, "  mov %%rdx, %%rax\n");
     return;
+  case ND_SHL:
+    fprintf(out, "  mov %%rdi, %%rcx\n");
+    fprintf(out, "  shl %%cl, %%rax\n");
+    return;
+  case ND_SHR:
+    fprintf(out, "  mov %%rdi, %%rcx\n");
+    fprintf(out, "  sar %%cl, %%rax\n");
+    return;
   case ND_BITAND:
     fprintf(out, "  and %%rdi, %%rax\n");
     return;
@@ -297,11 +366,10 @@ static void gen_stmt(Node *node) {
     int c = count();
     if (node->init)
       gen_stmt(node->init);
-    if (loop_depth >= MAX_LOOP)
+    if (brk_depth >= MAX_LOOP || cont_depth >= MAX_LOOP)
       error("loop nesting too deep");
-    brk_labels[loop_depth] = c;
-    cont_labels[loop_depth] = c;
-    loop_depth++;
+    brk_labels[brk_depth++] = c;
+    cont_labels[cont_depth++] = c;
 
     fprintf(out, ".L.begin.%d:\n", c);
     if (node->cond) {
@@ -316,18 +384,72 @@ static void gen_stmt(Node *node) {
     fprintf(out, "  jmp .L.begin.%d\n", c);
     fprintf(out, ".L.end.%d:\n", c);
 
-    loop_depth--;
+    brk_depth--;
+    cont_depth--;
     return;
   }
+  case ND_DO: {
+    int c = count();
+    if (brk_depth >= MAX_LOOP || cont_depth >= MAX_LOOP)
+      error("loop nesting too deep");
+    brk_labels[brk_depth++] = c;
+    cont_labels[cont_depth++] = c;
+
+    fprintf(out, ".L.begin.%d:\n", c);
+    gen_stmt(node->then);
+    fprintf(out, ".L.continue.%d:\n", c);
+    gen_expr(node->cond);
+    fprintf(out, "  cmp $0, %%rax\n");
+    fprintf(out, "  jne .L.begin.%d\n", c);
+    fprintf(out, ".L.end.%d:\n", c);
+
+    brk_depth--;
+    cont_depth--;
+    return;
+  }
+  case ND_SWITCH: {
+    Node **cases = NULL;
+    int ncases = 0;
+    int default_label = -1;
+    collect_cases(node->then, &cases, &ncases, &default_label);
+
+    int c = count();
+    if (brk_depth >= MAX_LOOP)
+      error("switch nesting too deep");
+    brk_labels[brk_depth++] = c;
+
+    gen_expr(node->cond);
+    for (int i = 0; i < ncases; i++) {
+      if (cases[i]->label == default_label)
+        continue;
+      fprintf(out, "  cmp $%ld, %%rax\n", cases[i]->val);
+      fprintf(out, "  je .L.case.%d\n", cases[i]->label);
+    }
+    if (default_label >= 0)
+      fprintf(out, "  jmp .L.case.%d\n", default_label);
+    else
+      fprintf(out, "  jmp .L.end.%d\n", c);
+
+    gen_stmt(node->then);
+    fprintf(out, ".L.end.%d:\n", c);
+
+    brk_depth--;
+    free(cases);
+    return;
+  }
+  case ND_CASE:
+    fprintf(out, ".L.case.%d:\n", node->label);
+    gen_stmt(node->lhs);
+    return;
   case ND_BREAK:
-    if (loop_depth == 0)
+    if (brk_depth == 0)
       error("stray break");
-    fprintf(out, "  jmp .L.end.%d\n", brk_labels[loop_depth - 1]);
+    fprintf(out, "  jmp .L.end.%d\n", brk_labels[brk_depth - 1]);
     return;
   case ND_CONTINUE:
-    if (loop_depth == 0)
+    if (cont_depth == 0)
       error("stray continue");
-    fprintf(out, "  jmp .L.continue.%d\n", cont_labels[loop_depth - 1]);
+    fprintf(out, "  jmp .L.continue.%d\n", cont_labels[cont_depth - 1]);
     return;
   case ND_BLOCK:
     for (Node *n = node->body; n; n = n->next)
@@ -342,7 +464,8 @@ static void gen_stmt(Node *node) {
 static void gen_function(Function *fn) {
   current_fn = fn->name;
   depth = 0;
-  loop_depth = 0;
+  brk_depth = 0;
+  cont_depth = 0;
 
   fprintf(out, "  .text\n");
   fprintf(out, "  .globl %s\n", fn->name);

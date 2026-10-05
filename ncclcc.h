@@ -98,6 +98,15 @@ typedef enum {
   ND_ADDR,      // Unary "&"
   ND_DEREF,     // Unary "*"
   ND_MEMBER,    // "." or "->"
+  ND_CAST,      // Type cast
+  ND_COMMA,     // ","
+  ND_PRE_INC,   // Pre "++"
+  ND_PRE_DEC,   // Pre "--"
+  ND_POST_INC,  // Post "++"
+  ND_POST_DEC,  // Post "--"
+  ND_DO,        // "do" statement
+  ND_SWITCH,    // "switch" statement
+  ND_CASE,      // "case" label
   ND_NEG,       // Unary minus
   ND_NOT,    // Logical negation
   ND_BITNOT, // Bitwise complement
@@ -106,6 +115,8 @@ typedef enum {
   ND_MUL,    // *
   ND_DIV,    // /
   ND_MOD,    // %
+  ND_SHL,    // <<
+  ND_SHR,    // >>
   ND_EQ,     // ==
   ND_NE,     // !=
   ND_LT,     // <
@@ -197,6 +208,7 @@ struct Node {
   Type *ty;      // Result type
   StringLit *str;  // Used if kind == ND_STR
   Member *member;  // Used if kind == ND_MEMBER
+  int label;       // Used for switch/case labels
   long val;      // Used if kind == ND_NUM
 };
 

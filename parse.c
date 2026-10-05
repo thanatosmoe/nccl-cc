@@ -105,24 +105,81 @@ static Obj *new_gvar(Token *tok, Type *ty) {
 }
 
 static Type *struct_tags;
+
+typedef struct Typedef Typedef;
+struct Typedef {
+  Typedef *next;
+  char *name;
+  Type *ty;
+};
+static Typedef *typedefs;
+
+typedef struct EnumConst EnumConst;
+struct EnumConst {
+  EnumConst *next;
+  char *name;
+  long val;
+};
+static EnumConst *enum_consts;
+
 static bool is_typename(Token *tok);
+static bool tok_eq_str(Token *tok, char *s);
+static Node *conditional(Token **rest, Token *tok);
 static Type *declspec(Token **rest, Token *tok);
 static Type *declarator(Token **rest, Token *tok, Type *ty, Token **name);
 static Type *struct_decl(Token **rest, Token *tok);
+static Type *enum_decl(Token **rest, Token *tok);
+static void typedef_decl(Token **rest, Token *tok);
 
-// declspec = "char" | "int" | struct-decl
+// declspec = ("static"|"extern"|"const"|...) *
+//            ( "char" | "int" | "long" | "short" | "unsigned" | "signed"
+//              | struct-decl | enum-decl | ident )
 static Type *declspec(Token **rest, Token *tok) {
+  for (;;) {
+    if (equal(tok, "static") || equal(tok, "extern") || equal(tok, "const") ||
+        equal(tok, "inline") || equal(tok, "register") || equal(tok, "volatile"))
+      tok = tok->next;
+    else
+      break;
+  }
+
   if (equal(tok, "char")) {
     *rest = tok->next;
     return ty_char;
   }
-  if (equal(tok, "int")) {
+  if (equal(tok, "int") || equal(tok, "void")) {
     *rest = tok->next;
+    return ty_int;
+  }
+  if (equal(tok, "long") || equal(tok, "short") || equal(tok, "unsigned") ||
+      equal(tok, "signed")) {
+    tok = tok->next;
+    if (equal(tok, "int"))
+      tok = tok->next;
+    *rest = tok;
     return ty_int;
   }
   if (equal(tok, "struct"))
     return struct_decl(rest, tok);
+  if (equal(tok, "enum"))
+    return enum_decl(rest, tok);
+
+  for (Typedef *td = typedefs; td; td = td->next)
+    if (tok_eq_str(tok, td->name)) {
+      *rest = tok->next;
+      return td->ty;
+    }
+
   error_at(tok->loc, "expected a type name");
+}
+
+static bool find_enum(Token *tok, long *val) {
+  for (EnumConst *e = enum_consts; e; e = e->next)
+    if (tok_eq_str(tok, e->name)) {
+      *val = e->val;
+      return true;
+    }
+  return false;
 }
 
 static Type *pointer_to(Type *base) {
@@ -187,14 +244,18 @@ static bool tok_eq_str(Token *tok, char *s) {
 // struct-decl = "struct" ident ("{" (declspec declarator ("," declarator)* ";")* "}")?
 static Type *struct_decl(Token **rest, Token *tok) {
   tok = tok->next; // Skip "struct"
-  if (tok->kind != TK_IDENT)
-    error_at(tok->loc, "expected a struct tag name");
-  Token *tag = tok;
-  tok = tok->next;
+
+  Token *tag = NULL;
+  if (tok->kind == TK_IDENT) {
+    tag = tok;
+    tok = tok->next;
+  }
 
   if (!equal(tok, "{")) {
+    if (!tag)
+      error_at(tok->loc, "expected a struct tag name or '{'");
     for (Type *ty = struct_tags; ty; ty = ty->next)
-      if (tok_eq_str(tag, ty->tag)) {
+      if (ty->tag && tok_eq_str(tag, ty->tag)) {
         *rest = tok;
         return ty;
       }
@@ -203,11 +264,13 @@ static Type *struct_decl(Token **rest, Token *tok) {
 
   Type *ty = calloc(1, sizeof(Type));
   ty->kind = TY_STRUCT;
-  ty->tag = token_str(tag);
+  ty->tag = tag ? token_str(tag) : NULL;
 
   // Register the tag before parsing members so the struct can refer to itself.
-  ty->next = struct_tags;
-  struct_tags = ty;
+  if (tag) {
+    ty->next = struct_tags;
+    struct_tags = ty;
+  }
 
   Member head = {0};
   Member *cur = &head;
@@ -248,6 +311,91 @@ static Type *struct_decl(Token **rest, Token *tok) {
   return ty;
 }
 
+// Evaluates a constant integer expression (used for enum values).
+static long const_eval(Node *node) {
+  switch (node->kind) {
+  case ND_NUM: return node->val;
+  case ND_NEG: return -const_eval(node->lhs);
+  case ND_NOT: return !const_eval(node->lhs);
+  case ND_BITNOT: return ~const_eval(node->lhs);
+  case ND_ADD: return const_eval(node->lhs) + const_eval(node->rhs);
+  case ND_SUB: return const_eval(node->lhs) - const_eval(node->rhs);
+  case ND_MUL: return const_eval(node->lhs) * const_eval(node->rhs);
+  case ND_DIV: { long r = const_eval(node->rhs); return r ? const_eval(node->lhs) / r : 0; }
+  case ND_MOD: { long r = const_eval(node->rhs); return r ? const_eval(node->lhs) % r : 0; }
+  case ND_SHL: return const_eval(node->lhs) << const_eval(node->rhs);
+  case ND_SHR: return const_eval(node->lhs) >> const_eval(node->rhs);
+  case ND_BITAND: return const_eval(node->lhs) & const_eval(node->rhs);
+  case ND_BITOR: return const_eval(node->lhs) | const_eval(node->rhs);
+  case ND_BITXOR: return const_eval(node->lhs) ^ const_eval(node->rhs);
+  default: error("not a constant expression");
+  }
+}
+
+// enum-decl = "enum" ident? ("{" enumerator ("," enumerator)* ","? "}")?
+static Type *enum_decl(Token **rest, Token *tok) {
+  tok = tok->next; // Skip "enum"
+  if (tok->kind == TK_IDENT)
+    tok = tok->next; // Optional tag
+
+  if (!equal(tok, "{")) {
+    *rest = tok; // Reference to an enum tag; treat as int.
+    return ty_int;
+  }
+
+  tok = tok->next;
+  long val = 0;
+  while (!equal(tok, "}")) {
+    if (tok->kind != TK_IDENT)
+      error_at(tok->loc, "expected an enumerator name");
+    EnumConst *e = calloc(1, sizeof(EnumConst));
+    e->name = token_str(tok);
+    tok = tok->next;
+
+    if (equal(tok, "=")) {
+      Node *n = conditional(&tok, tok->next);
+      val = const_eval(n);
+    }
+    e->val = val++;
+    e->next = enum_consts;
+    enum_consts = e;
+
+    if (equal(tok, ",")) {
+      tok = tok->next;
+      if (equal(tok, "}"))
+        break;
+      continue;
+    }
+    break;
+  }
+  *rest = skip(tok, "}");
+  return ty_int;
+}
+
+static void add_typedef(Token *name, Type *ty) {
+  Typedef *td = calloc(1, sizeof(Typedef));
+  td->name = token_str(name);
+  td->ty = ty;
+  td->next = typedefs;
+  typedefs = td;
+}
+
+// typedef = "typedef" declspec declarator ("," declarator)* ";"
+static void typedef_decl(Token **rest, Token *tok) {
+  Type *base = declspec(&tok, tok->next);
+  for (;;) {
+    Token *name;
+    Type *ty = declarator(&tok, tok, base, &name);
+    add_typedef(name, ty);
+    if (equal(tok, ",")) {
+      tok = tok->next;
+      continue;
+    }
+    break;
+  }
+  *rest = skip(tok, ";");
+}
+
 // Builds a member-access node `lhs.name`.
 static Node *struct_ref(Node *lhs, Token *name) {
   if (lhs->ty->kind != TY_STRUCT)
@@ -266,6 +414,8 @@ static Node *struct_ref(Node *lhs, Token *name) {
 static Node *expr(Token **rest, Token *tok);
 static Node *assign(Token **rest, Token *tok);
 static Node *conditional(Token **rest, Token *tok);
+static Node *new_add(Node *lhs, Node *rhs);
+static Node *new_sub(Node *lhs, Node *rhs);
 static Node *logor(Token **rest, Token *tok);
 static Node *logand(Token **rest, Token *tok);
 static Node *bitor(Token **rest, Token *tok);
@@ -273,28 +423,65 @@ static Node *bitxor(Token **rest, Token *tok);
 static Node *bitand(Token **rest, Token *tok);
 static Node *equality(Token **rest, Token *tok);
 static Node *relational(Token **rest, Token *tok);
+static Node *shift(Token **rest, Token *tok);
 static Node *add(Token **rest, Token *tok);
 static Node *mul(Token **rest, Token *tok);
 static Node *unary(Token **rest, Token *tok);
+static Node *cast(Token **rest, Token *tok);
 static Node *postfix(Token **rest, Token *tok);
 static Node *primary(Token **rest, Token *tok);
 static Node *declaration(Token **rest, Token *tok);
 
-// expr = assign
+// expr = assign ("," assign)*
 static Node *expr(Token **rest, Token *tok) {
-  return assign(rest, tok);
+  Node *node = assign(&tok, tok);
+  while (equal(tok, ",")) {
+    Node *rhs = assign(&tok, tok->next);
+    Node *n = new_binary(ND_COMMA, node, rhs);
+    n->ty = rhs->ty;
+    node = n;
+  }
+  *rest = tok;
+  return node;
 }
 
-// assign = conditional ("=" assign)?
+// assign = conditional (("=" | "+=" | ...) assign)?
 static Node *assign(Token **rest, Token *tok) {
   Node *node = conditional(&tok, tok);
+
   if (equal(tok, "=")) {
     Node *as = new_binary(ND_ASSIGN, node, assign(rest, tok->next));
     as->ty = node->ty;
     return as;
   }
-  *rest = tok;
-  return node;
+
+  NodeKind op;
+  if (equal(tok, "+=")) op = ND_ADD;
+  else if (equal(tok, "-=")) op = ND_SUB;
+  else if (equal(tok, "*=")) op = ND_MUL;
+  else if (equal(tok, "/=")) op = ND_DIV;
+  else if (equal(tok, "%=")) op = ND_MOD;
+  else if (equal(tok, "&=")) op = ND_BITAND;
+  else if (equal(tok, "|=")) op = ND_BITOR;
+  else if (equal(tok, "^=")) op = ND_BITXOR;
+  else if (equal(tok, "<<=")) op = ND_SHL;
+  else if (equal(tok, ">>=")) op = ND_SHR;
+  else {
+    *rest = tok;
+    return node;
+  }
+
+  Node *rhs = assign(rest, tok->next);
+  Node *val;
+  if (op == ND_ADD)
+    val = new_add(node, rhs);
+  else if (op == ND_SUB)
+    val = new_sub(node, rhs);
+  else
+    val = new_binary(op, node, rhs);
+  Node *as = new_binary(ND_ASSIGN, node, val);
+  as->ty = node->ty;
+  return as;
 }
 
 // conditional = logor ("?" expr ":" conditional)?
@@ -374,18 +561,33 @@ static Node *equality(Token **rest, Token *tok) {
   return node;
 }
 
-// relational = add ("<" add | "<=" add | ">" add | ">=" add)*
+// relational = shift ("<" shift | "<=" shift | ">" shift | ">=" shift)*
 static Node *relational(Token **rest, Token *tok) {
-  Node *node = add(&tok, tok);
+  Node *node = shift(&tok, tok);
   for (;;) {
     if (equal(tok, "<"))
-      node = new_binary(ND_LT, node, add(&tok, tok->next));
+      node = new_binary(ND_LT, node, shift(&tok, tok->next));
     else if (equal(tok, "<="))
-      node = new_binary(ND_LE, node, add(&tok, tok->next));
+      node = new_binary(ND_LE, node, shift(&tok, tok->next));
     else if (equal(tok, ">"))
-      node = new_binary(ND_LT, add(&tok, tok->next), node);
+      node = new_binary(ND_LT, shift(&tok, tok->next), node);
     else if (equal(tok, ">="))
-      node = new_binary(ND_LE, add(&tok, tok->next), node);
+      node = new_binary(ND_LE, shift(&tok, tok->next), node);
+    else
+      break;
+  }
+  *rest = tok;
+  return node;
+}
+
+// shift = add ("<<" add | ">>" add)*
+static Node *shift(Token **rest, Token *tok) {
+  Node *node = add(&tok, tok);
+  for (;;) {
+    if (equal(tok, "<<"))
+      node = new_binary(ND_SHL, node, add(&tok, tok->next));
+    else if (equal(tok, ">>"))
+      node = new_binary(ND_SHR, node, add(&tok, tok->next));
     else
       break;
   }
@@ -473,7 +675,8 @@ static Node *mul(Token **rest, Token *tok) {
   return node;
 }
 
-// unary = ("+" | "-" | "!" | "~" | "&" | "*") unary | postfix
+// unary = ("+" | "-" | "!" | "~" | "&" | "*" | "++" | "--" | "sizeof") unary
+//       | cast
 static Node *unary(Token **rest, Token *tok) {
   if (equal(tok, "+"))
     return unary(rest, tok->next);
@@ -502,6 +705,39 @@ static Node *unary(Token **rest, Token *tok) {
     if (!node->lhs->ty->base)
       error_at(tok->loc, "invalid pointer dereference");
     node->ty = node->lhs->ty->base;
+    return node;
+  }
+  if (equal(tok, "++")) {
+    Node *node = new_unary(ND_PRE_INC, unary(rest, tok->next));
+    node->ty = node->lhs->ty;
+    return node;
+  }
+  if (equal(tok, "--")) {
+    Node *node = new_unary(ND_PRE_DEC, unary(rest, tok->next));
+    node->ty = node->lhs->ty;
+    return node;
+  }
+  if (equal(tok, "sizeof")) {
+    Token *t = tok->next;
+    if (equal(t, "(") && is_typename(t->next)) {
+      Type *ty = declspec(&t, t->next);
+      *rest = skip(t, ")");
+      return new_num(ty->size);
+    }
+    Node *operand = unary(&t, t);
+    *rest = t;
+    return new_num(operand->ty->size);
+  }
+  return cast(rest, tok);
+}
+
+// cast = "(" typename ")" cast | postfix
+static Node *cast(Token **rest, Token *tok) {
+  if (equal(tok, "(") && is_typename(tok->next)) {
+    Type *ty = declspec(&tok, tok->next);
+    tok = skip(tok, ")");
+    Node *node = new_unary(ND_CAST, cast(rest, tok));
+    node->ty = ty;
     return node;
   }
   return postfix(rest, tok);
@@ -535,6 +771,22 @@ static Node *postfix(Token **rest, Token *tok) {
       deref->ty = node->ty->base;
       node = struct_ref(deref, tok->next);
       tok = tok->next->next;
+      continue;
+    }
+
+    if (equal(tok, "++")) {
+      Node *node2 = new_unary(ND_POST_INC, node);
+      node2->ty = node->ty;
+      node = node2;
+      tok = tok->next;
+      continue;
+    }
+
+    if (equal(tok, "--")) {
+      Node *node2 = new_unary(ND_POST_DEC, node);
+      node2->ty = node->ty;
+      node = node2;
+      tok = tok->next;
       continue;
     }
 
@@ -572,6 +824,11 @@ static Node *primary(Token **rest, Token *tok) {
   }
 
   if (tok->kind == TK_IDENT) {
+    long enum_val;
+    if (find_enum(tok, &enum_val)) {
+      *rest = tok->next;
+      return new_num(enum_val);
+    }
     Obj *var = find_var(tok);
     if (!var)
       error_at(tok->loc, "undefined variable");
@@ -666,6 +923,54 @@ static Node *stmt(Token **rest, Token *tok) {
   if (equal(tok, ";")) {
     Node *node = new_node(ND_BLOCK); // empty statement
     *rest = tok->next;
+    return node;
+  }
+
+  if (equal(tok, "typedef")) {
+    typedef_decl(&tok, tok);
+    *rest = tok;
+    return NULL;
+  }
+
+  if (equal(tok, "do")) {
+    Node *node = new_node(ND_DO);
+    node->then = stmt(&tok, tok->next);
+    tok = skip(tok, "while");
+    tok = skip(tok, "(");
+    node->cond = expr(&tok, tok);
+    tok = skip(tok, ")");
+    *rest = skip(tok, ";");
+    return node;
+  }
+
+  if (equal(tok, "switch")) {
+    Node *node = new_node(ND_SWITCH);
+    tok = skip(tok->next, "(");
+    node->cond = expr(&tok, tok);
+    tok = skip(tok, ")");
+    node->then = stmt(&tok, tok);
+    *rest = tok;
+    return node;
+  }
+
+  if (equal(tok, "case")) {
+    Node *node = new_node(ND_CASE);
+    Node *v = expr(&tok, tok->next);
+    if (v->kind != ND_NUM)
+      error_at(tok->loc, "case value must be a constant");
+    node->val = v->val;
+    tok = skip(tok, ":");
+    node->lhs = stmt(&tok, tok);
+    *rest = tok;
+    return node;
+  }
+
+  if (equal(tok, "default")) {
+    Node *node = new_node(ND_CASE);
+    node->label = -1;
+    tok = skip(tok->next, ":");
+    node->lhs = stmt(&tok, tok);
+    *rest = tok;
     return node;
   }
 
@@ -764,10 +1069,22 @@ static Node *stmt(Token **rest, Token *tok) {
 
 // Returns true if the token starts a type name.
 static bool is_typename(Token *tok) {
-  return equal(tok, "int") || equal(tok, "char") || equal(tok, "struct");
+  if (equal(tok, "int") || equal(tok, "char") || equal(tok, "struct") ||
+      equal(tok, "enum") || equal(tok, "long") || equal(tok, "short") ||
+      equal(tok, "unsigned") || equal(tok, "signed") || equal(tok, "void") ||
+      equal(tok, "const") || equal(tok, "static") || equal(tok, "extern"))
+    return true;
+
+  for (Typedef *td = typedefs; td; td = td->next)
+    if (tok_eq_str(tok, td->name))
+      return true;
+  return false;
 }
 
 static bool is_function(Token *tok) {
+  while (equal(tok, "static") || equal(tok, "extern") || equal(tok, "const") ||
+         equal(tok, "inline") || equal(tok, "volatile"))
+    tok = tok->next;
   return is_typename(tok) && tok->next->kind == TK_IDENT &&
          equal(tok->next->next, "(");
 }
@@ -826,7 +1143,9 @@ Function *parse(Token *tok) {
   while (tok->kind != TK_EOF) {
     locals = NULL;
     frame_size = 0;
-    if (is_function(tok))
+    if (equal(tok, "typedef"))
+      typedef_decl(&tok, tok);
+    else if (is_function(tok))
       cur = cur->next = function(&tok, tok);
     else
       global_decl(&tok, tok);
