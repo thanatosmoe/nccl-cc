@@ -81,6 +81,7 @@ static Obj *new_gvar(Token *tok) {
 
 static Node *expr(Token **rest, Token *tok);
 static Node *assign(Token **rest, Token *tok);
+static Node *conditional(Token **rest, Token *tok);
 static Node *logor(Token **rest, Token *tok);
 static Node *logand(Token **rest, Token *tok);
 static Node *bitor(Token **rest, Token *tok);
@@ -98,11 +99,27 @@ static Node *expr(Token **rest, Token *tok) {
   return assign(rest, tok);
 }
 
-// assign = logor ("=" assign)?
+// assign = conditional ("=" assign)?
 static Node *assign(Token **rest, Token *tok) {
-  Node *node = logor(&tok, tok);
+  Node *node = conditional(&tok, tok);
   if (equal(tok, "="))
     return new_binary(ND_ASSIGN, node, assign(rest, tok->next));
+  *rest = tok;
+  return node;
+}
+
+// conditional = logor ("?" expr ":" conditional)?
+static Node *conditional(Token **rest, Token *tok) {
+  Node *node = logor(&tok, tok);
+  if (equal(tok, "?")) {
+    Node *cond = new_node(ND_COND);
+    cond->cond = node;
+    cond->then = expr(&tok, tok->next);
+    tok = skip(tok, ":");
+    cond->els = conditional(&tok, tok);
+    *rest = tok;
+    return cond;
+  }
   *rest = tok;
   return node;
 }
@@ -277,9 +294,38 @@ static void global_decl(Token **rest, Token *tok) {
 }
 
 // stmt = "return" expr ";"
+//      | "if" "(" expr ")" stmt ("else" stmt)?
+//      | "{" stmt* "}"
 //      | "int" ident ("=" expr)? ";"
 //      | expr ";"
 static Node *stmt(Token **rest, Token *tok) {
+  if (equal(tok, "if")) {
+    Node *node = new_node(ND_IF);
+    tok = skip(tok->next, "(");
+    node->cond = expr(&tok, tok);
+    tok = skip(tok, ")");
+    node->then = stmt(&tok, tok);
+    if (equal(tok, "else"))
+      node->els = stmt(&tok, tok->next);
+    *rest = tok;
+    return node;
+  }
+
+  if (equal(tok, "{")) {
+    Node *node = new_node(ND_BLOCK);
+    Node head = {0};
+    Node *cur = &head;
+    tok = tok->next;
+    while (!equal(tok, "}")) {
+      Node *s = stmt(&tok, tok);
+      if (s)
+        cur = cur->next = s;
+    }
+    *rest = tok->next;
+    node->body = head.next;
+    return node;
+  }
+
   if (equal(tok, "return")) {
     Node *node = new_node(ND_RETURN);
     node->lhs = expr(&tok, tok->next);

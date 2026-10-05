@@ -62,9 +62,12 @@ Token *tokenize(char *input);
 typedef enum {
   ND_RETURN,    // "return" statement
   ND_EXPR_STMT, // Expression statement
+  ND_IF,        // "if" statement
+  ND_BLOCK,     // "{ ... }"
   ND_NUM,       // Integer literal
   ND_VAR,       // Variable (local or global)
   ND_ASSIGN,    // "="
+  ND_COND,      // "?:" conditional
   ND_NEG,       // Unary minus
   ND_NOT,    // Logical negation
   ND_BITNOT, // Bitwise complement
@@ -106,6 +109,10 @@ struct Node {
   Node *next;    // Next node
   Node *lhs;     // Left-hand side
   Node *rhs;     // Right-hand side
+  Node *cond;    // Used if kind == ND_IF or ND_COND
+  Node *then;    // Used if kind == ND_IF or ND_COND
+  Node *els;     // Used if kind == ND_IF or ND_COND
+  Node *body;    // Used if kind == ND_BLOCK
   Obj *var;      // Used if kind == ND_VAR
   long val;      // Used if kind == ND_NUM
 };

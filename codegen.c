@@ -56,6 +56,18 @@ static void gen_expr(Node *node) {
     pop("%rdi");
     fprintf(out, "  mov %%rax, (%%rdi)\n");
     return;
+  case ND_COND: {
+    int c = count();
+    gen_expr(node->cond);
+    fprintf(out, "  cmp $0, %%rax\n");
+    fprintf(out, "  je .L.else.%d\n", c);
+    gen_expr(node->then);
+    fprintf(out, "  jmp .L.end.%d\n", c);
+    fprintf(out, ".L.else.%d:\n", c);
+    gen_expr(node->els);
+    fprintf(out, ".L.end.%d:\n", c);
+    return;
+  }
   case ND_NEG:
     gen_expr(node->lhs);
     fprintf(out, "  neg %%rax\n");
@@ -165,6 +177,23 @@ static void gen_stmt(Node *node) {
     return;
   case ND_EXPR_STMT:
     gen_expr(node->lhs);
+    return;
+  case ND_IF: {
+    int c = count();
+    gen_expr(node->cond);
+    fprintf(out, "  cmp $0, %%rax\n");
+    fprintf(out, "  je .L.else.%d\n", c);
+    gen_stmt(node->then);
+    fprintf(out, "  jmp .L.end.%d\n", c);
+    fprintf(out, ".L.else.%d:\n", c);
+    if (node->els)
+      gen_stmt(node->els);
+    fprintf(out, ".L.end.%d:\n", c);
+    return;
+  }
+  case ND_BLOCK:
+    for (Node *n = node->body; n; n = n->next)
+      gen_stmt(n);
     return;
   default:
     break;
