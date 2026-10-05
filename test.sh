@@ -21,7 +21,7 @@ assert() {
 
   printf '%s\n' "$program" > "$WORK/test.c"
 
-  if ! "$CC" -S -o "$WORK/test.s" "$WORK/test.c" > "$WORK/cc.log" 2>&1; then
+  if ! timeout 10 "$CC" -S -o "$WORK/test.s" "$WORK/test.c" > "$WORK/cc.log" 2>&1; then
     echo "FAIL (compile): $program"
     sed 's/^/    /' "$WORK/cc.log"
     fail=$((fail + 1))
@@ -35,8 +35,13 @@ assert() {
     return
   fi
 
-  "$WORK/test.exe"
+  timeout 5 "$WORK/test.exe"
   local actual=$?
+  if [ "$actual" = 124 ]; then
+    echo "FAIL (timeout): $program"
+    fail=$((fail + 1))
+    return
+  fi
 
   if [ "$actual" = "$expected" ]; then
     pass=$((pass + 1))
@@ -50,7 +55,12 @@ assert() {
 assert_fail() {
   local program="$1"
   printf '%s\n' "$program" > "$WORK/test.c"
-  if "$CC" -S -o "$WORK/test.s" "$WORK/test.c" > "$WORK/cc.log" 2>&1; then
+  timeout 10 "$CC" -S -o "$WORK/test.s" "$WORK/test.c" > "$WORK/cc.log" 2>&1
+  local rc=$?
+  if [ "$rc" -eq 124 ]; then
+    echo "FAIL (compile timeout): $program"
+    fail=$((fail + 1))
+  elif [ "$rc" -eq 0 ]; then
     echo "FAIL (should not compile): $program"
     fail=$((fail + 1))
   else
@@ -182,6 +192,22 @@ assert 8 'int main() { int i; for (i = 0; i < 100; i = i + 1) { if (i * i > 50) 
 assert 3 'int main() { int i = 0; while (1) { i = i + 1; if (i == 3) break; } return i; }'
 assert 3 'int main() { int i; for (i = 0; i < 3; i = i + 1); return i; }'
 assert 25 'int main() { int i = 0; int j = 0; int n = 0; while (i < 5) { j = 0; while (j < 5) { n = n + 1; j = j + 1; } i = i + 1; } return n; }'
+
+# step 10: functions
+assert 42 'int main() { return foo(); } int foo() { return 42; }'
+assert 3 'int main() { return add(1, 2); } int add(int a, int b) { return a + b; }'
+assert 10 'int main() { return add(4, 6); } int add(int a, int b) { return a + b; }'
+assert 7 'int main() { return sub(10, 3); } int sub(int a, int b) { return a - b; }'
+assert 8 'int main() { return mul(add(1, 1), 4); } int add(int a, int b) { return a+b; } int mul(int a, int b) { return a*b; }'
+assert 10 'int main() { return add(1, 2) + add(3, 4); } int add(int a, int b) { return a+b; }'
+assert 12 'int id(int x) { return x; } int main() { return id(3)+id(4)+id(5); }'
+assert 100 'int id(int x) { return x; } int main() { return id(10) * id(10); }'
+assert 5 'int sum5(int a, int b, int c, int d, int e) { return a+b+c+d+e; } int main() { return sum5(1,1,1,1,1); }'
+assert 55 'int sum6(int a, int b, int c, int d, int e, int f) { return a+b+c+d+e+f; } int main() { return sum6(1,2,3,4,5,40); }'
+assert 5 'int f(int x) { if (x > 0) return 5; return 9; } int main() { return f(1); }'
+assert 9 'int f(int x) { if (x > 0) return 5; return 9; } int main() { return f(0); }'
+assert 7 'int g; int set(int x) { g = x; return 0; } int main() { set(7); return g; }'
+assert 6 'int f(int a, int b, int c) { int d = a + b; return d + c; } int main() { return f(1, 2, 3); }'
 
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'

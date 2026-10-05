@@ -8,6 +8,8 @@ static int brk_labels[MAX_LOOP];
 static int cont_labels[MAX_LOOP];
 static int loop_depth;
 
+static char *current_fn;
+
 static int count(void) {
   static int i = 1;
   return i++;
@@ -45,6 +47,43 @@ static void gen_addr(Node *node) {
   error("not an lvalue");
 }
 
+// Generates a function call following the Microsoft x64 calling convention:
+// the first four integer arguments go in rcx/rdx/r8/r9, the rest on the
+// stack; the caller reserves 32 bytes of shadow space and keeps rsp 16-byte
+// aligned at the call.
+static void gen_funcall(Node *node) {
+  int nargs = 0;
+  for (Node *arg = node->args; arg; arg = arg->next)
+    nargs++;
+
+  int num_stack = nargs > 4 ? nargs - 4 : 0;
+  int total = 32 + 8 * num_stack;
+  if ((depth + num_stack) % 2)
+    total += 8;
+  fprintf(out, "  sub $%d, %%rsp\n", total);
+  depth += total / 8;
+
+  int i = 0;
+  for (Node *arg = node->args; arg; arg = arg->next) {
+    gen_expr(arg);
+    if (i < 4)
+      fprintf(out, "  mov %%rax, %d(%%rsp)\n", 8 * i);
+    else
+      fprintf(out, "  mov %%rax, %d(%%rsp)\n", 32 + 8 * (i - 4));
+    i++;
+  }
+
+  fprintf(out, "  mov 0(%%rsp), %%rcx\n");
+  fprintf(out, "  mov 8(%%rsp), %%rdx\n");
+  fprintf(out, "  mov 16(%%rsp), %%r8\n");
+  fprintf(out, "  mov 24(%%rsp), %%r9\n");
+  fprintf(out, "  xor %%eax, %%eax\n");
+  fprintf(out, "  call %s\n", node->name);
+  fprintf(out, "  add $%d, %%rsp\n", total);
+
+  depth -= total / 8;
+}
+
 static void gen_expr(Node *node) {
   switch (node->kind) {
   case ND_NUM:
@@ -60,6 +99,9 @@ static void gen_expr(Node *node) {
     gen_expr(node->rhs);
     pop("%rdi");
     fprintf(out, "  mov %%rax, (%%rdi)\n");
+    return;
+  case ND_FUNCALL:
+    gen_funcall(node);
     return;
   case ND_COND: {
     int c = count();
@@ -178,7 +220,7 @@ static void gen_stmt(Node *node) {
   switch (node->kind) {
   case ND_RETURN:
     gen_expr(node->lhs);
-    fprintf(out, "  jmp .L.return.main\n");
+    fprintf(out, "  jmp .L.return.%s\n", current_fn);
     return;
   case ND_EXPR_STMT:
     gen_expr(node->lhs);
@@ -242,15 +284,47 @@ static void gen_stmt(Node *node) {
   error("invalid statement");
 }
 
-void codegen(Node *node, FILE *outfile) {
+static void gen_function(Function *fn) {
+  current_fn = fn->name;
+  depth = 0;
+  loop_depth = 0;
+
+  fprintf(out, "  .text\n");
+  fprintf(out, "  .globl %s\n", fn->name);
+  fprintf(out, "%s:\n", fn->name);
+  fprintf(out, "  push %%rbp\n");
+  fprintf(out, "  mov %%rsp, %%rbp\n");
+
+  int frame = (fn->stack_size + 15) / 16 * 16;
+  if (frame)
+    fprintf(out, "  sub $%d, %%rsp\n", frame);
+
+  // Copy incoming arguments into their stack slots.
+  static char *argreg[] = {"%rcx", "%rdx", "%r8", "%r9"};
+  int i = 0;
+  for (Obj *var = fn->params; var; var = var->next) {
+    if (i < 4) {
+      fprintf(out, "  mov %s, -%d(%%rbp)\n", argreg[i], var->offset);
+    } else {
+      // [rbp+0]=saved rbp, [rbp+8]=return address, [rbp+16..47]=shadow space,
+      // so the 5th argument starts at [rbp+48].
+      fprintf(out, "  mov %d(%%rbp), %%rax\n", 48 + 8 * (i - 4));
+      fprintf(out, "  mov %%rax, -%d(%%rbp)\n", var->offset);
+    }
+    i++;
+  }
+
+  for (Node *n = fn->body; n; n = n->next)
+    gen_stmt(n);
+
+  fprintf(out, ".L.return.%s:\n", fn->name);
+  fprintf(out, "  mov %%rbp, %%rsp\n");
+  fprintf(out, "  pop %%rbp\n");
+  fprintf(out, "  ret\n");
+}
+
+void codegen(Function *prog, FILE *outfile) {
   out = outfile;
-
-  int nlocals = 0;
-  for (Obj *var = locals; var; var = var->next)
-    nlocals++;
-
-  // Keep the stack 16-byte aligned at every call site.
-  int frame = (nlocals * 8 + 15) / 16 * 16;
 
   if (globals) {
     fprintf(out, "  .data\n");
@@ -261,19 +335,6 @@ void codegen(Node *node, FILE *outfile) {
     }
   }
 
-  fprintf(out, "  .text\n");
-  fprintf(out, "  .globl main\n");
-  fprintf(out, "main:\n");
-  fprintf(out, "  push %%rbp\n");
-  fprintf(out, "  mov %%rsp, %%rbp\n");
-  if (frame)
-    fprintf(out, "  sub $%d, %%rsp\n", frame);
-
-  for (Node *n = node; n; n = n->next)
-    gen_stmt(n);
-
-  fprintf(out, ".L.return.main:\n");
-  fprintf(out, "  mov %%rbp, %%rsp\n");
-  fprintf(out, "  pop %%rbp\n");
-  fprintf(out, "  ret\n");
+  for (Function *fn = prog; fn; fn = fn->next)
+    gen_function(fn);
 }

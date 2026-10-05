@@ -67,6 +67,7 @@ typedef enum {
   ND_BREAK,     // "break" statement
   ND_CONTINUE,  // "continue" statement
   ND_BLOCK,     // "{ ... }"
+  ND_FUNCALL,   // Function call
   ND_NUM,       // Integer literal
   ND_VAR,       // Variable (local or global)
   ND_ASSIGN,    // "="
@@ -118,16 +119,29 @@ struct Node {
   Node *init;    // Used if kind == ND_FOR
   Node *inc;     // Used if kind == ND_FOR
   Node *body;    // Used if kind == ND_BLOCK
+  Node *args;    // Used if kind == ND_FUNCALL
+  char *name;    // Used if kind == ND_FUNCALL
   Obj *var;      // Used if kind == ND_VAR
   long val;      // Used if kind == ND_NUM
 };
 
-Node *parse(Token *tok);
+// Function.
+typedef struct Function Function;
+struct Function {
+  Function *next; // Next function
+  char *name;     // Function name
+  Obj *params;    // Parameters
+  Node *body;     // Function body
+  Obj *locals;    // Local variables
+  int stack_size; // Size of the stack frame (bytes)
+};
+
+Function *parse(Token *tok);
 
 //
 // codegen.c
 //
 
-void codegen(Node *node, FILE *out);
+void codegen(Function *prog, FILE *out);
 
 #endif // NCCLCC_H

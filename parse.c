@@ -57,12 +57,18 @@ static Obj *find_var(Token *tok) {
   return NULL;
 }
 
-// Declares a new local variable.
-static Obj *new_lvar(Token *tok) {
+// Allocates a variable without linking it into a list.
+static Obj *new_var(Token *tok) {
   Obj *var = calloc(1, sizeof(Obj));
   var->name = token_str(tok);
   var->len = tok->len;
   var->offset = 8 * ++local_count;
+  return var;
+}
+
+// Declares a new local variable.
+static Obj *new_lvar(Token *tok) {
+  Obj *var = new_var(tok);
   var->next = locals;
   locals = var;
   return var;
@@ -249,10 +255,27 @@ static Node *unary(Token **rest, Token *tok) {
   return primary(rest, tok);
 }
 
-// primary = "(" expr ")" | ident | num
+// primary = "(" expr ")" | ident "(" (assign ("," assign)*)? ")" | ident | num
 static Node *primary(Token **rest, Token *tok) {
   if (equal(tok, "(")) {
     Node *node = expr(&tok, tok->next);
+    *rest = skip(tok, ")");
+    return node;
+  }
+
+  if (tok->kind == TK_IDENT && equal(tok->next, "(")) {
+    Node *node = new_node(ND_FUNCALL);
+    node->name = token_str(tok);
+    tok = tok->next->next;
+
+    Node head = {0};
+    Node *cur = &head;
+    while (!equal(tok, ")")) {
+      if (cur != &head)
+        tok = skip(tok, ",");
+      cur = cur->next = assign(&tok, tok);
+    }
+    node->args = head.next;
     *rest = skip(tok, ")");
     return node;
   }
@@ -430,24 +453,62 @@ static bool is_function(Token *tok) {
          equal(tok->next->next, "(");
 }
 
-// program = global_decl* "int" "main" "(" ")" "{" stmt* "}"
-Node *parse(Token *tok) {
-  while (equal(tok, "int") && !is_function(tok))
-    global_decl(&tok, tok);
-
+// function = "int" ident "(" (param ("," param)*)? ")" "{" stmt* "}"
+static Function *function(Token **rest, Token *tok) {
   tok = skip(tok, "int");
-  tok = skip(tok, "main");
-  tok = skip(tok, "(");
-  tok = skip(tok, ")");
-  tok = skip(tok, "{");
 
-  Node head = {0};
-  Node *cur = &head;
-  while (!equal(tok, "}")) {
-    Node *node = stmt(&tok, tok);
-    if (node)
-      cur = cur->next = node;
+  Function *fn = calloc(1, sizeof(Function));
+  fn->name = token_str(tok);
+  tok = tok->next;
+  tok = skip(tok, "(");
+
+  locals = NULL;
+  local_count = 0;
+
+  Obj head = {0};
+  Obj *cur = &head;
+  while (!equal(tok, ")")) {
+    if (cur != &head)
+      tok = skip(tok, ",");
+    tok = skip(tok, "int");
+    if (tok->kind != TK_IDENT)
+      error_at(tok->loc, "expected a parameter name");
+    cur = cur->next = new_var(tok);
+    tok = tok->next;
   }
-  skip(tok, "}");
+  fn->params = head.next;
+  locals = head.next; // Parameters are the initial local variables.
+  tok = tok->next;    // Skip ")"
+
+  tok = skip(tok, "{");
+  Node bhead = {0};
+  Node *bcur = &bhead;
+  while (!equal(tok, "}")) {
+    Node *s = stmt(&tok, tok);
+    if (s)
+      bcur = bcur->next = s;
+  }
+  tok = tok->next; // Skip "}"
+
+  fn->body = bhead.next;
+  fn->locals = locals;
+  fn->stack_size = local_count * 8;
+  *rest = tok;
+  return fn;
+}
+
+// program = (function | global_decl)*
+Function *parse(Token *tok) {
+  Function head = {0};
+  Function *cur = &head;
+
+  while (tok->kind != TK_EOF) {
+    locals = NULL;
+    local_count = 0;
+    if (is_function(tok))
+      cur = cur->next = function(&tok, tok);
+    else
+      global_decl(&tok, tok);
+  }
   return head.next;
 }

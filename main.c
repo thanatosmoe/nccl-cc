@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
 
   char *input = read_file(input_path);
   Token *tok = tokenize(input);
-  Node *prog = parse(tok);
+  Function *prog = parse(tok);
 
   char *asm_path = opt_S
       ? (output_path ? output_path : replace_ext(input_path, ".s"))
