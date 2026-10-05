@@ -25,10 +25,33 @@ static void emit_cmp(char *setcc) {
   fprintf(out, "  movzbl %%al, %%eax\n");
 }
 
+static void gen_expr(Node *node);
+static void gen_stmt(Node *node);
+
+// Computes the address of an lvalue into rax.
+static void gen_addr(Node *node) {
+  if (node->kind == ND_LVAR) {
+    fprintf(out, "  lea -%d(%%rbp), %%rax\n", node->var->offset);
+    return;
+  }
+  error("not an lvalue");
+}
+
 static void gen_expr(Node *node) {
   switch (node->kind) {
   case ND_NUM:
     fprintf(out, "  mov $%ld, %%rax\n", node->val);
+    return;
+  case ND_LVAR:
+    gen_addr(node);
+    fprintf(out, "  mov (%%rax), %%rax\n");
+    return;
+  case ND_ASSIGN:
+    gen_addr(node->lhs);
+    push();
+    gen_expr(node->rhs);
+    pop("%rdi");
+    fprintf(out, "  mov %%rax, (%%rdi)\n");
     return;
   case ND_NEG:
     gen_expr(node->lhs);
@@ -131,15 +154,44 @@ static void gen_expr(Node *node) {
   error("invalid expression");
 }
 
+static void gen_stmt(Node *node) {
+  switch (node->kind) {
+  case ND_RETURN:
+    gen_expr(node->lhs);
+    fprintf(out, "  jmp .L.return.main\n");
+    return;
+  case ND_EXPR_STMT:
+    gen_expr(node->lhs);
+    return;
+  default:
+    break;
+  }
+  error("invalid statement");
+}
+
 void codegen(Node *node, FILE *outfile) {
   out = outfile;
+
+  int nlocals = 0;
+  for (Obj *var = locals; var; var = var->next)
+    nlocals++;
+
+  // Keep the stack 16-byte aligned at every call site.
+  int frame = (nlocals * 8 + 15) / 16 * 16;
 
   fprintf(out, "  .text\n");
   fprintf(out, "  .globl main\n");
   fprintf(out, "main:\n");
   fprintf(out, "  push %%rbp\n");
   fprintf(out, "  mov %%rsp, %%rbp\n");
-  gen_expr(node);
+  if (frame)
+    fprintf(out, "  sub $%d, %%rsp\n", frame);
+
+  for (Node *n = node; n; n = n->next)
+    gen_stmt(n);
+
+  fprintf(out, ".L.return.main:\n");
+  fprintf(out, "  mov %%rbp, %%rsp\n");
   fprintf(out, "  pop %%rbp\n");
   fprintf(out, "  ret\n");
 }

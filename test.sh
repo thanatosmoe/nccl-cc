@@ -122,6 +122,16 @@ assert 0 'int main() { return 1^1; }'
 assert 3 'int main() { return 1|2&3; }'
 assert 7 'int main() { return 1+2|4; }'
 
+# step 5: local variables and multiple statements
+assert 3 'int main() { int a = 3; return a; }'
+assert 8 'int main() { int a = 3; int b = 5; return a+b; }'
+assert 11 'int main() { int x = 2; int y = 3; return x*y + x + y; }'
+assert 3 'int main() { int foo = 3; return foo; }'
+assert 6 'int main() { int a; int b; int c; return 6; }'
+assert 17 'int main() { int a = 10; int b = 7; a; b; return a+b; }'
+assert 3 'int main() { int a = 3; a; return a; }'
+assert 10 'int main() { int a = 1; int b = 2; int c = 3; int d = 4; return a+b+c+d; }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
 assert_fail 'int main() { return -; }'

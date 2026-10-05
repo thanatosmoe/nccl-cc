@@ -1,5 +1,7 @@
 #include "ncclcc.h"
 
+Obj *locals;
+
 static Node *new_node(NodeKind kind) {
   Node *node = calloc(1, sizeof(Node));
   node->kind = kind;
@@ -23,6 +25,39 @@ static Node *new_num(long val) {
   Node *node = new_node(ND_NUM);
   node->val = val;
   return node;
+}
+
+static Node *new_var_node(Obj *var) {
+  Node *node = new_node(ND_LVAR);
+  node->var = var;
+  return node;
+}
+
+static char *token_str(Token *tok) {
+  char *s = calloc(tok->len + 1, 1);
+  memcpy(s, tok->loc, tok->len);
+  return s;
+}
+
+static int local_count;
+
+// Finds a local variable by name, or NULL.
+static Obj *find_lvar(Token *tok) {
+  for (Obj *var = locals; var; var = var->next)
+    if (var->len == tok->len && !memcmp(tok->loc, var->name, tok->len))
+      return var;
+  return NULL;
+}
+
+// Declares a new local variable.
+static Obj *new_lvar(Token *tok) {
+  Obj *var = calloc(1, sizeof(Obj));
+  var->name = token_str(tok);
+  var->len = tok->len;
+  var->offset = 8 * ++local_count;
+  var->next = locals;
+  locals = var;
+  return var;
 }
 
 static Node *expr(Token **rest, Token *tok);
@@ -167,37 +202,88 @@ static Node *unary(Token **rest, Token *tok) {
   return primary(rest, tok);
 }
 
-// primary = "(" expr ")" | num
+// primary = "(" expr ")" | ident | num
 static Node *primary(Token **rest, Token *tok) {
   if (equal(tok, "(")) {
     Node *node = expr(&tok, tok->next);
     *rest = skip(tok, ")");
     return node;
   }
+
+  if (tok->kind == TK_IDENT) {
+    Obj *var = find_lvar(tok);
+    if (!var)
+      error_at(tok->loc, "undefined variable");
+    *rest = tok->next;
+    return new_var_node(var);
+  }
+
   if (tok->kind == TK_NUM) {
     Node *node = new_num(tok->val);
     *rest = tok->next;
     return node;
   }
+
   error_at(tok->loc, "expected an expression");
 }
 
+// decl = "int" ident ("=" expr)?
+static Node *decl(Token **rest, Token *tok) {
+  tok = skip(tok, "int");
+  if (tok->kind != TK_IDENT)
+    error_at(tok->loc, "expected a variable name");
+  Obj *var = new_lvar(tok);
+  tok = tok->next;
+
+  if (equal(tok, "=")) {
+    Node *lhs = new_var_node(var);
+    Node *rhs = expr(&tok, tok->next);
+    *rest = skip(tok, ";");
+    Node *node = new_node(ND_EXPR_STMT);
+    node->lhs = new_binary(ND_ASSIGN, lhs, rhs);
+    return node;
+  }
+
+  *rest = skip(tok, ";");
+  return NULL;
+}
+
 // stmt = "return" expr ";"
+//      | decl
+//      | expr ";"
 static Node *stmt(Token **rest, Token *tok) {
-  tok = skip(tok, "return");
-  Node *node = expr(&tok, tok);
+  if (equal(tok, "return")) {
+    Node *node = new_node(ND_RETURN);
+    node->lhs = expr(&tok, tok->next);
+    *rest = skip(tok, ";");
+    return node;
+  }
+
+  if (equal(tok, "int"))
+    return decl(rest, tok);
+
+  Node *node = new_node(ND_EXPR_STMT);
+  node->lhs = expr(&tok, tok);
   *rest = skip(tok, ";");
   return node;
 }
 
-// program = "int" "main" "(" ")" "{" stmt "}"
+// program = "int" "main" "(" ")" "{" stmt* "}"
 Node *parse(Token *tok) {
   tok = skip(tok, "int");
   tok = skip(tok, "main");
   tok = skip(tok, "(");
   tok = skip(tok, ")");
   tok = skip(tok, "{");
-  Node *node = stmt(&tok, tok);
+
+  Node head = {0};
+  Node *cur = &head;
+  while (!equal(tok, "}")) {
+    Node *node = stmt(&tok, tok);
+    if (node) {
+      cur = cur->next = node;
+    }
+  }
   skip(tok, "}");
-  return node;
+  return head.next;
 }

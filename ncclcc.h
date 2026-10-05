@@ -60,8 +60,12 @@ Token *tokenize(char *input);
 //
 
 typedef enum {
-  ND_NUM,    // Integer literal
-  ND_NEG,    // Unary minus
+  ND_RETURN,    // "return" statement
+  ND_EXPR_STMT, // Expression statement
+  ND_NUM,       // Integer literal
+  ND_LVAR,      // Local variable
+  ND_ASSIGN,    // "="
+  ND_NEG,       // Unary minus
   ND_NOT,    // Logical negation
   ND_BITNOT, // Bitwise complement
   ND_ADD,    // +
@@ -80,6 +84,17 @@ typedef enum {
   ND_LOGOR,  // ||
 } NodeKind;
 
+// Variable (local for now).
+typedef struct Obj Obj;
+struct Obj {
+  Obj *next;  // Next variable
+  char *name; // Variable name
+  int len;    // Name length
+  int offset; // Offset from %rbp
+};
+
+extern Obj *locals;
+
 // AST node type
 typedef struct Node Node;
 struct Node {
@@ -87,6 +102,7 @@ struct Node {
   Node *next;    // Next node
   Node *lhs;     // Left-hand side
   Node *rhs;     // Right-hand side
+  Obj *var;      // Used if kind == ND_LVAR or ND_ASSIGN
   long val;      // Used if kind == ND_NUM
 };
 
