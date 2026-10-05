@@ -3,7 +3,7 @@
 char *current_input;
 
 // Reports an error and exit.
-void error(char *fmt, ...) {
+NCCL_NORETURN void error(char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   vfprintf(stderr, fmt, ap);
@@ -16,7 +16,7 @@ void error(char *fmt, ...) {
 //
 // foo.c:10: x = y + 1;
 //               ^ <error message here>
-void error_at(char *loc, char *fmt, ...) {
+NCCL_NORETURN void error_at(char *loc, char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
 

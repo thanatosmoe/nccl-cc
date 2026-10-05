@@ -9,6 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__GNUC__)
+#define NCCL_NORETURN __attribute__((noreturn))
+#else
+#define NCCL_NORETURN
+#endif
+
 //
 // tokenize.c
 //
@@ -32,13 +38,13 @@ struct Token {
 extern char *current_input;
 
 // Reports an error and exit.
-void error(char *fmt, ...);
+NCCL_NORETURN void error(char *fmt, ...);
 
 // Reports an error message in the following format and exit.
 //
 // foo.c:10: x = y + 1;
 //               ^ <error message here>
-void error_at(char *loc, char *fmt, ...);
+NCCL_NORETURN void error_at(char *loc, char *fmt, ...);
 
 // Returns true if the token matches the given string.
 bool equal(Token *tok, char *op);
@@ -54,7 +60,10 @@ Token *tokenize(char *input);
 //
 
 typedef enum {
-  ND_NUM, // Integer literal
+  ND_NUM,    // Integer literal
+  ND_NEG,    // Unary minus
+  ND_NOT,    // Logical negation
+  ND_BITNOT, // Bitwise complement
 } NodeKind;
 
 // AST node type
@@ -62,6 +71,8 @@ typedef struct Node Node;
 struct Node {
   NodeKind kind; // Node kind
   Node *next;    // Next node
+  Node *lhs;     // Left-hand side
+  Node *rhs;     // Right-hand side
   long val;      // Used if kind == ND_NUM
 };
 

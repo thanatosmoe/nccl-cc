@@ -7,6 +7,20 @@ static void gen_expr(Node *node) {
   case ND_NUM:
     fprintf(out, "  mov $%ld, %%rax\n", node->val);
     return;
+  case ND_NEG:
+    gen_expr(node->lhs);
+    fprintf(out, "  neg %%rax\n");
+    return;
+  case ND_BITNOT:
+    gen_expr(node->lhs);
+    fprintf(out, "  not %%rax\n");
+    return;
+  case ND_NOT:
+    gen_expr(node->lhs);
+    fprintf(out, "  cmp $0, %%rax\n");
+    fprintf(out, "  sete %%al\n");
+    fprintf(out, "  movzbl %%al, %%eax\n");
+    return;
   }
   error("invalid expression");
 }

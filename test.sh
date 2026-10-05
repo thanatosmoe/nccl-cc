@@ -67,8 +67,19 @@ assert 0 'int main() { return 0; }'
 assert 42 'int main() { return 42; }'
 assert 7 'int main() { return 7; }'
 
+# step 2: unary operators
+assert 5 'int main() { return +5; }'
+assert 10 'int main() { return -(-10); }'
+assert 3 'int main() { return (-(-3)); }'
+assert 0 'int main() { return !5; }'
+assert 1 'int main() { return !0; }'
+assert 42 'int main() { return ~(-43); }'
+assert 0 'int main() { return ~(-1); }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
+assert_fail 'int main() { return -; }'
+assert_fail 'int main() { return (3; }'
 
 # --- report --------------------------------------------------------------
 echo
