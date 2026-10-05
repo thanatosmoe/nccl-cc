@@ -22,17 +22,21 @@
 typedef enum {
   TK_IDENT, // Identifiers
   TK_PUNCT, // Punctuators
+  TK_KEYWORD, // Keywords
+  TK_STR,   // String literals
   TK_NUM,   // Numeric literals
   TK_EOF,   // End-of-file markers
 } TokenKind;
 
 typedef struct Token Token;
 struct Token {
-  TokenKind kind; // Token kind
-  Token *next;    // Next token
-  long val;       // If kind is TK_NUM, its value
-  char *loc;      // Token location
-  int len;        // Token length
+  TokenKind kind;  // Token kind
+  Token *next;     // Next token
+  long val;        // If kind is TK_NUM, its value
+  char *str;       // If kind is TK_STR, its decoded value
+  int str_len;     // Length of TK_STR (excluding the terminating NUL)
+  char *loc;       // Token location
+  int len;         // Token length
 };
 
 extern char *current_input;
@@ -69,6 +73,7 @@ typedef enum {
   ND_BLOCK,     // "{ ... }"
   ND_FUNCALL,   // Function call
   ND_NUM,       // Integer literal
+  ND_STR,       // String literal
   ND_VAR,       // Variable (local or global)
   ND_ASSIGN,    // "="
   ND_COND,      // "?:" conditional
@@ -91,12 +96,40 @@ typedef enum {
   ND_LOGOR,  // ||
 } NodeKind;
 
+// Type
+typedef enum {
+  TY_CHAR, // char
+  TY_INT,  // int
+} TypeKind;
+
+typedef struct Type Type;
+struct Type {
+  TypeKind kind; // Type kind
+  int size;      // sizeof() value
+};
+
+extern Type *ty_char;
+extern Type *ty_int;
+
+// An in-memory string literal.
+typedef struct StringLit StringLit;
+struct StringLit {
+  StringLit *next;
+  char *data; // NUL-terminated contents
+  int len;    // Length excluding the terminating NUL
+  int id;     // Unique id (used for the assembly label)
+};
+
+extern StringLit *strings;
+extern int str_count;
+
 // Variable.
 typedef struct Obj Obj;
 struct Obj {
   Obj *next;      // Next variable
   char *name;     // Variable name
   int len;        // Name length
+  Type *ty;       // Type
   bool is_global; // True if a global variable
   bool has_init;  // True if a global has an initializer
   int offset;     // Offset from %rbp (locals)
@@ -122,6 +155,8 @@ struct Node {
   Node *args;    // Used if kind == ND_FUNCALL
   char *name;    // Used if kind == ND_FUNCALL
   Obj *var;      // Used if kind == ND_VAR
+  Type *ty;      // Result type
+  StringLit *str; // Used if kind == ND_STR
   long val;      // Used if kind == ND_NUM
 };
 
@@ -130,6 +165,7 @@ typedef struct Function Function;
 struct Function {
   Function *next; // Next function
   char *name;     // Function name
+  Type *ty;       // Return type
   Obj *params;    // Parameters
   Node *body;     // Function body
   Obj *locals;    // Local variables

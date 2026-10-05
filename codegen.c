@@ -91,14 +91,23 @@ static void gen_expr(Node *node) {
     return;
   case ND_VAR:
     gen_addr(node);
-    fprintf(out, "  mov (%%rax), %%rax\n");
+    if (node->var->ty->size == 1)
+      fprintf(out, "  movsbl (%%rax), %%eax\n");
+    else
+      fprintf(out, "  mov (%%rax), %%rax\n");
+    return;
+  case ND_STR:
+    fprintf(out, "  lea .L.str.%d(%%rip), %%rax\n", node->str->id);
     return;
   case ND_ASSIGN:
     gen_addr(node->lhs);
     push();
     gen_expr(node->rhs);
     pop("%rdi");
-    fprintf(out, "  mov %%rax, (%%rdi)\n");
+    if (node->lhs->ty->size == 1)
+      fprintf(out, "  mov %%al, (%%rdi)\n");
+    else
+      fprintf(out, "  mov %%rax, (%%rdi)\n");
     return;
   case ND_FUNCALL:
     gen_funcall(node);
@@ -326,12 +335,22 @@ static void gen_function(Function *fn) {
 void codegen(Function *prog, FILE *outfile) {
   out = outfile;
 
-  if (globals) {
+  if (globals || strings) {
     fprintf(out, "  .data\n");
+
     for (Obj *var = globals; var; var = var->next) {
       fprintf(out, "  .globl %s\n", var->name);
       fprintf(out, "%s:\n", var->name);
-      fprintf(out, "  .quad %ld\n", var->has_init ? var->init_val : 0);
+      if (var->ty->size == 1)
+        fprintf(out, "  .byte %ld\n", var->has_init ? var->init_val : 0);
+      else
+        fprintf(out, "  .quad %ld\n", var->has_init ? var->init_val : 0);
+    }
+
+    for (StringLit *s = strings; s; s = s->next) {
+      fprintf(out, ".L.str.%d:\n", s->id);
+      for (int i = 0; i <= s->len; i++)
+        fprintf(out, "  .byte %d\n", i < s->len ? (unsigned char)s->data[i] : 0);
     }
   }
 

@@ -35,7 +35,7 @@ assert() {
     return
   fi
 
-  timeout 5 "$WORK/test.exe"
+  timeout 5 "$WORK/test.exe" > /dev/null 2>&1
   local actual=$?
   if [ "$actual" = 124 ]; then
     echo "FAIL (timeout): $program"
@@ -219,6 +219,23 @@ assert 210 'int sum(int n) { if (n == 0) return 0; return n + sum(n - 1); } int 
 assert 9 'int ack(int m, int n) { if (m == 0) return n + 1; if (n == 0) return ack(m - 1, 1); return ack(m - 1, ack(m, n - 1)); } int main() { return ack(2, 3); }'
 assert 1 'int is_odd(int n) { if (n == 0) return 0; return is_even(n - 1); } int is_even(int n) { if (n == 0) return 1; return is_odd(n - 1); } int main() { return is_even(10); }'
 assert 1 'int is_odd(int n) { if (n == 0) return 0; return is_even(n - 1); } int is_even(int n) { if (n == 0) return 1; return is_odd(n - 1); } int main() { return is_odd(7); }'
+
+# step 12: char type and string literals
+assert 65 "int main() { return 'A'; }"
+assert 66 "int main() { return 'A' + 1; }"
+assert 10 "int main() { return '\n'; }"
+assert 0 "int main() { return '\0'; }"
+assert 122 "int main() { char c = 'z'; return c; }"
+assert 65 "int main() { char c = 321; return c; }"
+assert 97 "int main() { char c = 'a'; c = 'A' + 32; return c; }"
+assert 65 "int f(char c) { return c; } int main() { return f(65); }"
+assert 65 "int f(char c) { return c; } int main() { return f(321); }"
+assert 6 'int main() { return printf("hello\n"); }'
+assert 3 'int main() { return printf("abc"); }'
+assert 5 'int main() { return printf("%d", 12345); }'
+assert 1 'int main() { return printf("%c", 65); }'
+assert 1 'int main() { char c = 65; return printf("%c", c); }'
+assert 12 'int main() { return printf("hello %s\n", "world"); }'
 
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'

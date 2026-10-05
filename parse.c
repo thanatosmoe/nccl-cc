@@ -25,12 +25,14 @@ static Node *new_binary(NodeKind kind, Node *lhs, Node *rhs) {
 static Node *new_num(long val) {
   Node *node = new_node(ND_NUM);
   node->val = val;
+  node->ty = ty_int;
   return node;
 }
 
 static Node *new_var_node(Obj *var) {
   Node *node = new_node(ND_VAR);
   node->var = var;
+  node->ty = var->ty;
   return node;
 }
 
@@ -58,31 +60,46 @@ static Obj *find_var(Token *tok) {
 }
 
 // Allocates a variable without linking it into a list.
-static Obj *new_var(Token *tok) {
+static Obj *new_var(Token *tok, Type *ty) {
   Obj *var = calloc(1, sizeof(Obj));
   var->name = token_str(tok);
   var->len = tok->len;
+  var->ty = ty;
   var->offset = 8 * ++local_count;
   return var;
 }
 
 // Declares a new local variable.
-static Obj *new_lvar(Token *tok) {
-  Obj *var = new_var(tok);
+static Obj *new_lvar(Token *tok, Type *ty) {
+  Obj *var = new_var(tok, ty);
   var->next = locals;
   locals = var;
   return var;
 }
 
 // Declares a new global variable.
-static Obj *new_gvar(Token *tok) {
+static Obj *new_gvar(Token *tok, Type *ty) {
   Obj *var = calloc(1, sizeof(Obj));
   var->name = token_str(tok);
   var->len = tok->len;
+  var->ty = ty;
   var->is_global = true;
   var->next = globals;
   globals = var;
   return var;
+}
+
+// declspec = "char" | "int"
+static Type *declspec(Token **rest, Token *tok) {
+  if (equal(tok, "char")) {
+    *rest = tok->next;
+    return ty_char;
+  }
+  if (equal(tok, "int")) {
+    *rest = tok->next;
+    return ty_int;
+  }
+  error_at(tok->loc, "expected a type name");
 }
 
 static Node *expr(Token **rest, Token *tok);
@@ -288,6 +305,21 @@ static Node *primary(Token **rest, Token *tok) {
     return new_var_node(var);
   }
 
+  if (tok->kind == TK_STR) {
+    StringLit *s = calloc(1, sizeof(StringLit));
+    s->data = tok->str;
+    s->len = tok->str_len;
+    s->id = str_count++;
+    s->next = strings;
+    strings = s;
+
+    Node *node = new_node(ND_STR);
+    node->str = s;
+    node->ty = ty_int; // Address of the string (pointer not yet modeled)
+    *rest = tok->next;
+    return node;
+  }
+
   if (tok->kind == TK_NUM) {
     Node *node = new_num(tok->val);
     *rest = tok->next;
@@ -297,13 +329,13 @@ static Node *primary(Token **rest, Token *tok) {
   error_at(tok->loc, "expected an expression");
 }
 
-// global_decl = "int" ident ("=" num)?
+// global_decl = declspec ident ("=" num)?
 static void global_decl(Token **rest, Token *tok) {
-  tok = skip(tok, "int");
+  Type *ty = declspec(&tok, tok);
   if (tok->kind != TK_IDENT)
     error_at(tok->loc, "expected a variable name");
 
-  Obj *var = new_gvar(tok);
+  Obj *var = new_gvar(tok, ty);
   tok = tok->next;
 
   if (equal(tok, "=")) {
@@ -317,13 +349,13 @@ static void global_decl(Token **rest, Token *tok) {
   *rest = skip(tok, ";");
 }
 
-// declaration = "int" ident ("=" expr)?
+// declaration = declspec ident ("=" expr)?
 static Node *declaration(Token **rest, Token *tok) {
-  tok = skip(tok, "int");
+  Type *ty = declspec(&tok, tok);
   if (tok->kind != TK_IDENT)
     error_at(tok->loc, "expected a variable name");
 
-  Obj *var = new_lvar(tok);
+  Obj *var = new_lvar(tok, ty);
   tok = tok->next;
 
   if (equal(tok, "=")) {
@@ -331,7 +363,9 @@ static Node *declaration(Token **rest, Token *tok) {
     Node *rhs = expr(&tok, tok->next);
     *rest = tok;
     Node *node = new_node(ND_EXPR_STMT);
-    node->lhs = new_binary(ND_ASSIGN, lhs, rhs);
+    Node *as = new_binary(ND_ASSIGN, lhs, rhs);
+    as->ty = ty;
+    node->lhs = as;
     return node;
   }
 
@@ -370,7 +404,7 @@ static Node *stmt(Token **rest, Token *tok) {
   if (equal(tok, "for")) {
     Node *node = new_node(ND_FOR);
     tok = skip(tok->next, "(");
-    if (equal(tok, "int")) {
+    if (equal(tok, "int") || equal(tok, "char")) {
       node->init = declaration(&tok, tok);
     } else if (!equal(tok, ";")) {
       Node *e = new_node(ND_EXPR_STMT);
@@ -436,7 +470,7 @@ static Node *stmt(Token **rest, Token *tok) {
     return node;
   }
 
-  if (equal(tok, "int")) {
+  if (equal(tok, "int") || equal(tok, "char")) {
     Node *node = declaration(&tok, tok);
     *rest = skip(tok, ";");
     return node;
@@ -448,16 +482,22 @@ static Node *stmt(Token **rest, Token *tok) {
   return node;
 }
 
+// Returns true if the token starts a type name.
+static bool is_typename(Token *tok) {
+  return equal(tok, "int") || equal(tok, "char");
+}
+
 static bool is_function(Token *tok) {
-  return equal(tok, "int") && tok->next->kind == TK_IDENT &&
+  return is_typename(tok) && tok->next->kind == TK_IDENT &&
          equal(tok->next->next, "(");
 }
 
-// function = "int" ident "(" (param ("," param)*)? ")" "{" stmt* "}"
+// function = declspec ident "(" (param ("," param)*)? ")" "{" stmt* "}"
 static Function *function(Token **rest, Token *tok) {
-  tok = skip(tok, "int");
+  Type *ret_ty = declspec(&tok, tok);
 
   Function *fn = calloc(1, sizeof(Function));
+  fn->ty = ret_ty;
   fn->name = token_str(tok);
   tok = tok->next;
   tok = skip(tok, "(");
@@ -470,10 +510,10 @@ static Function *function(Token **rest, Token *tok) {
   while (!equal(tok, ")")) {
     if (cur != &head)
       tok = skip(tok, ",");
-    tok = skip(tok, "int");
+    Type *pty = declspec(&tok, tok);
     if (tok->kind != TK_IDENT)
       error_at(tok->loc, "expected a parameter name");
-    cur = cur->next = new_var(tok);
+    cur = cur->next = new_var(tok, pty);
     tok = tok->next;
   }
   fn->params = head.next;
