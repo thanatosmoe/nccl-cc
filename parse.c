@@ -80,6 +80,7 @@ static Obj *new_gvar(Token *tok) {
 }
 
 static Node *expr(Token **rest, Token *tok);
+static Node *assign(Token **rest, Token *tok);
 static Node *logor(Token **rest, Token *tok);
 static Node *logand(Token **rest, Token *tok);
 static Node *bitor(Token **rest, Token *tok);
@@ -92,9 +93,18 @@ static Node *mul(Token **rest, Token *tok);
 static Node *unary(Token **rest, Token *tok);
 static Node *primary(Token **rest, Token *tok);
 
-// expr = logor
+// expr = assign
 static Node *expr(Token **rest, Token *tok) {
-  return logor(rest, tok);
+  return assign(rest, tok);
+}
+
+// assign = logor ("=" assign)?
+static Node *assign(Token **rest, Token *tok) {
+  Node *node = logor(&tok, tok);
+  if (equal(tok, "="))
+    return new_binary(ND_ASSIGN, node, assign(rest, tok->next));
+  *rest = tok;
+  return node;
 }
 
 // logor = logand ("||" logand)*

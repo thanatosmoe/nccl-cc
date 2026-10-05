@@ -140,10 +140,23 @@ assert 3 'int g = 3; int main() { int a = g; return a; }'
 assert 21 'int g = 10; int main() { return g*2+1; }'
 assert 42 'int g = 42; int main() { int g = 1; return g + 41; }'
 
+# step 7: assignment
+assert 3 'int main() { int a; a = 3; return a; }'
+assert 8 'int main() { int a; int b; a = 3; b = 5; return a+b; }'
+assert 3 'int main() { int a; return a = 3; }'
+assert 8 'int main() { int a = 1; int b = 2; a = b = 8; return a; }'
+assert 8 'int main() { int a = 1; int b = 2; a = b = 8; return b; }'
+assert 4 'int main() { int a; int b; a = b = 2; return a+b; }'
+assert 4 'int main() { int a = 3; int b; b = a = a + 1; return a; }'
+assert 5 'int g; int main() { g = 5; return g; }'
+assert 10 'int g = 3; int main() { g = g + 7; return g; }'
+assert 6 'int g; int main() { int a = 2; g = a = a + 1; return g + a; }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
 assert_fail 'int main() { return -; }'
 assert_fail 'int main() { return (3; }'
+assert_fail 'int main() { return 1 = 2; }'
 
 # --- report --------------------------------------------------------------
 echo
