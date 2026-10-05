@@ -63,6 +63,9 @@ typedef enum {
   ND_RETURN,    // "return" statement
   ND_EXPR_STMT, // Expression statement
   ND_IF,        // "if" statement
+  ND_FOR,       // "for" or "while" statement
+  ND_BREAK,     // "break" statement
+  ND_CONTINUE,  // "continue" statement
   ND_BLOCK,     // "{ ... }"
   ND_NUM,       // Integer literal
   ND_VAR,       // Variable (local or global)
@@ -109,9 +112,11 @@ struct Node {
   Node *next;    // Next node
   Node *lhs;     // Left-hand side
   Node *rhs;     // Right-hand side
-  Node *cond;    // Used if kind == ND_IF or ND_COND
-  Node *then;    // Used if kind == ND_IF or ND_COND
+  Node *cond;    // Used if kind == ND_IF/ND_COND/ND_FOR
+  Node *then;    // Used if kind == ND_IF/ND_COND/ND_FOR
   Node *els;     // Used if kind == ND_IF or ND_COND
+  Node *init;    // Used if kind == ND_FOR
+  Node *inc;     // Used if kind == ND_FOR
   Node *body;    // Used if kind == ND_BLOCK
   Obj *var;      // Used if kind == ND_VAR
   long val;      // Used if kind == ND_NUM

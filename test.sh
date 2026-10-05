@@ -170,11 +170,26 @@ assert 4 'int main() { int a = 3; int b = 4; return a > b ? a : b; }'
 assert 2 'int main() { return 1 ? 2 : 3 ? 4 : 5; }'
 assert 4 'int main() { return 0 ? 2 : 1 ? 4 : 5; }'
 
+# step 9: loops
+assert 10 'int main() { int i = 0; int s = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }'
+assert 55 'int main() { int s = 0; for (int i = 1; i <= 10; i = i + 1) s = s + i; return s; }'
+assert 45 'int main() { int s = 0; for (int i = 0; i < 10; i = i + 1) s = s + i; return s; }'
+assert 5 'int main() { int i = 0; for (;;) { i = i + 1; if (i == 5) break; } return i; }'
+assert 9 'int main() { int i = 0; int s = 0; for (i = 0; i < 10; i = i + 1) { if (i == 5) continue; s = s + 1; } return s; }'
+assert 120 'int main() { int f = 1; for (int i = 1; i <= 5; i = i + 1) f = f * i; return f; }'
+assert 6 'int main() { int n = 0; for (int i = 0; i < 3; i = i + 1) for (int j = 0; j < 3; j = j + 1) { if (j == 2) break; n = n + 1; } return n; }'
+assert 8 'int main() { int i; for (i = 0; i < 100; i = i + 1) { if (i * i > 50) break; } return i; }'
+assert 3 'int main() { int i = 0; while (1) { i = i + 1; if (i == 3) break; } return i; }'
+assert 3 'int main() { int i; for (i = 0; i < 3; i = i + 1); return i; }'
+assert 25 'int main() { int i = 0; int j = 0; int n = 0; while (i < 5) { j = 0; while (j < 5) { n = n + 1; j = j + 1; } i = i + 1; } return n; }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
 assert_fail 'int main() { return -; }'
 assert_fail 'int main() { return (3; }'
 assert_fail 'int main() { return 1 = 2; }'
+assert_fail 'int main() { break; }'
+assert_fail 'int main() { continue; }'
 
 # --- report --------------------------------------------------------------
 echo

@@ -93,6 +93,7 @@ static Node *add(Token **rest, Token *tok);
 static Node *mul(Token **rest, Token *tok);
 static Node *unary(Token **rest, Token *tok);
 static Node *primary(Token **rest, Token *tok);
+static Node *declaration(Token **rest, Token *tok);
 
 // expr = assign
 static Node *expr(Token **rest, Token *tok) {
@@ -293,12 +294,44 @@ static void global_decl(Token **rest, Token *tok) {
   *rest = skip(tok, ";");
 }
 
+// declaration = "int" ident ("=" expr)?
+static Node *declaration(Token **rest, Token *tok) {
+  tok = skip(tok, "int");
+  if (tok->kind != TK_IDENT)
+    error_at(tok->loc, "expected a variable name");
+
+  Obj *var = new_lvar(tok);
+  tok = tok->next;
+
+  if (equal(tok, "=")) {
+    Node *lhs = new_var_node(var);
+    Node *rhs = expr(&tok, tok->next);
+    *rest = tok;
+    Node *node = new_node(ND_EXPR_STMT);
+    node->lhs = new_binary(ND_ASSIGN, lhs, rhs);
+    return node;
+  }
+
+  *rest = tok;
+  return NULL;
+}
+
 // stmt = "return" expr ";"
 //      | "if" "(" expr ")" stmt ("else" stmt)?
+//      | "for" "(" ... ")" stmt
+//      | "while" "(" expr ")" stmt
+//      | "break" ";"
+//      | "continue" ";"
 //      | "{" stmt* "}"
 //      | "int" ident ("=" expr)? ";"
 //      | expr ";"
 static Node *stmt(Token **rest, Token *tok) {
+  if (equal(tok, ";")) {
+    Node *node = new_node(ND_BLOCK); // empty statement
+    *rest = tok->next;
+    return node;
+  }
+
   if (equal(tok, "if")) {
     Node *node = new_node(ND_IF);
     tok = skip(tok->next, "(");
@@ -308,6 +341,53 @@ static Node *stmt(Token **rest, Token *tok) {
     if (equal(tok, "else"))
       node->els = stmt(&tok, tok->next);
     *rest = tok;
+    return node;
+  }
+
+  if (equal(tok, "for")) {
+    Node *node = new_node(ND_FOR);
+    tok = skip(tok->next, "(");
+    if (equal(tok, "int")) {
+      node->init = declaration(&tok, tok);
+    } else if (!equal(tok, ";")) {
+      Node *e = new_node(ND_EXPR_STMT);
+      e->lhs = expr(&tok, tok);
+      node->init = e;
+    }
+    tok = skip(tok, ";");
+    if (!equal(tok, ";"))
+      node->cond = expr(&tok, tok);
+    tok = skip(tok, ";");
+    if (!equal(tok, ")")) {
+      Node *e = new_node(ND_EXPR_STMT);
+      e->lhs = expr(&tok, tok);
+      node->inc = e;
+    }
+    tok = skip(tok, ")");
+    node->then = stmt(&tok, tok);
+    *rest = tok;
+    return node;
+  }
+
+  if (equal(tok, "while")) {
+    Node *node = new_node(ND_FOR);
+    tok = skip(tok->next, "(");
+    node->cond = expr(&tok, tok);
+    tok = skip(tok, ")");
+    node->then = stmt(&tok, tok);
+    *rest = tok;
+    return node;
+  }
+
+  if (equal(tok, "break")) {
+    Node *node = new_node(ND_BREAK);
+    *rest = skip(tok->next, ";");
+    return node;
+  }
+
+  if (equal(tok, "continue")) {
+    Node *node = new_node(ND_CONTINUE);
+    *rest = skip(tok->next, ";");
     return node;
   }
 
@@ -334,23 +414,9 @@ static Node *stmt(Token **rest, Token *tok) {
   }
 
   if (equal(tok, "int")) {
-    tok = skip(tok, "int");
-    if (tok->kind != TK_IDENT)
-      error_at(tok->loc, "expected a variable name");
-    Obj *var = new_lvar(tok);
-    tok = tok->next;
-
-    if (equal(tok, "=")) {
-      Node *lhs = new_var_node(var);
-      Node *rhs = expr(&tok, tok->next);
-      *rest = skip(tok, ";");
-      Node *node = new_node(ND_EXPR_STMT);
-      node->lhs = new_binary(ND_ASSIGN, lhs, rhs);
-      return node;
-    }
-
+    Node *node = declaration(&tok, tok);
     *rest = skip(tok, ";");
-    return NULL;
+    return node;
   }
 
   Node *node = new_node(ND_EXPR_STMT);

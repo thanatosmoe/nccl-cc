@@ -3,6 +3,11 @@
 static FILE *out;
 static int depth;
 
+#define MAX_LOOP 256
+static int brk_labels[MAX_LOOP];
+static int cont_labels[MAX_LOOP];
+static int loop_depth;
+
 static int count(void) {
   static int i = 1;
   return i++;
@@ -191,6 +196,42 @@ static void gen_stmt(Node *node) {
     fprintf(out, ".L.end.%d:\n", c);
     return;
   }
+  case ND_FOR: {
+    int c = count();
+    if (node->init)
+      gen_stmt(node->init);
+    if (loop_depth >= MAX_LOOP)
+      error("loop nesting too deep");
+    brk_labels[loop_depth] = c;
+    cont_labels[loop_depth] = c;
+    loop_depth++;
+
+    fprintf(out, ".L.begin.%d:\n", c);
+    if (node->cond) {
+      gen_expr(node->cond);
+      fprintf(out, "  cmp $0, %%rax\n");
+      fprintf(out, "  je .L.end.%d\n", c);
+    }
+    gen_stmt(node->then);
+    fprintf(out, ".L.continue.%d:\n", c);
+    if (node->inc)
+      gen_stmt(node->inc);
+    fprintf(out, "  jmp .L.begin.%d\n", c);
+    fprintf(out, ".L.end.%d:\n", c);
+
+    loop_depth--;
+    return;
+  }
+  case ND_BREAK:
+    if (loop_depth == 0)
+      error("stray break");
+    fprintf(out, "  jmp .L.end.%d\n", brk_labels[loop_depth - 1]);
+    return;
+  case ND_CONTINUE:
+    if (loop_depth == 0)
+      error("stray continue");
+    fprintf(out, "  jmp .L.continue.%d\n", cont_labels[loop_depth - 1]);
+    return;
   case ND_BLOCK:
     for (Node *n = node->body; n; n = n->next)
       gen_stmt(n);
