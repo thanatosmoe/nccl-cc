@@ -37,6 +37,8 @@ struct Token {
   int str_len;     // Length of TK_STR (excluding the terminating NUL)
   char *loc;       // Token location
   int len;         // Token length
+  bool at_bol;     // True if this token is at the beginning of a line
+  bool has_space;  // True if this token follows whitespace
 };
 
 extern char *current_input;
@@ -58,6 +60,22 @@ Token *skip(Token *tok, char *op);
 
 // Tokenize `input` and returns a linked list of tokens.
 Token *tokenize(char *input);
+
+// Returns a NUL-terminated copy of the token text.
+char *tok_strdup(Token *tok);
+
+// Reads the whole file into a NUL-terminated buffer (with a trailing '\n').
+char *read_file(char *path);
+
+extern char **include_paths;
+extern int include_path_count;
+
+//
+// preprocess.c
+//
+
+// Preprocesses the token list (macros, conditionals, includes).
+Token *preprocess(Token *tok);
 
 //
 // parse.c

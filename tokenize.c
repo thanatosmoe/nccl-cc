@@ -179,6 +179,12 @@ static Token *read_string_literal(char **pp) {
   return tok;
 }
 
+char *tok_strdup(Token *tok) {
+  char *s = calloc(tok->len + 1, 1);
+  memcpy(s, tok->loc, tok->len);
+  return s;
+}
+
 // Tokenize `input` and returns a linked list of tokens.
 Token *tokenize(char *input) {
   current_input = input;
@@ -186,12 +192,24 @@ Token *tokenize(char *input) {
   Token head = {0};
   Token *cur = &head;
 
+  bool at_bol = true;
+  bool has_space = false;
+
   while (*p) {
+    // Newline
+    if (*p == '\n') {
+      p++;
+      at_bol = true;
+      has_space = false;
+      continue;
+    }
+
     // Skip line comments.
     if (startswith(p, "//")) {
       p += 2;
       while (*p && *p != '\n')
         p++;
+      has_space = true;
       continue;
     }
 
@@ -200,61 +218,67 @@ Token *tokenize(char *input) {
       char *q = strstr(p + 2, "*/");
       if (!q)
         error_at(p, "unclosed block comment");
+      if (memchr(p, '\n', q - p))
+        at_bol = true;
       p = q + 2;
+      has_space = true;
       continue;
     }
 
-    // Skip whitespace characters.
+    // Skip other whitespace characters.
     if (isspace((unsigned char)*p)) {
       p++;
+      has_space = true;
       continue;
     }
+
+    bool tok_at_bol = at_bol;
+    bool tok_has_space = has_space;
+    Token *tok;
 
     // String literal
     if (*p == '"') {
-      cur = cur->next = read_string_literal(&p);
-      continue;
+      tok = read_string_literal(&p);
     }
-
     // Character literal
-    if (*p == '\'') {
-      cur = cur->next = read_char_literal(&p);
-      continue;
+    else if (*p == '\'') {
+      tok = read_char_literal(&p);
     }
-
     // Numeric literal
-    if (isdigit((unsigned char)*p)) {
+    else if (isdigit((unsigned char)*p)) {
       char *start = p;
       long val = strtol(p, &p, 10);
-      cur = cur->next = new_token(TK_NUM, start, p);
-      cur->val = val;
-      continue;
+      tok = new_token(TK_NUM, start, p);
+      tok->val = val;
     }
-
     // Identifier or keyword
-    if (is_ident1(*p)) {
+    else if (is_ident1(*p)) {
       char *start = p;
       do {
         p++;
       } while (is_ident2(*p));
-      Token *tok = new_token(TK_IDENT, start, p);
+      tok = new_token(TK_IDENT, start, p);
       if (is_keyword(tok))
         tok->kind = TK_KEYWORD;
-      cur = cur->next = tok;
-      continue;
     }
-
     // Punctuators
-    int punct_len = read_punct(p);
-    if (punct_len) {
-      cur = cur->next = new_token(TK_PUNCT, p, p + punct_len);
+    else {
+      int punct_len = read_punct(p);
+      if (!punct_len)
+        error_at(p, "invalid token");
+      tok = new_token(TK_PUNCT, p, p + punct_len);
       p += punct_len;
-      continue;
     }
 
-    error_at(p, "invalid token");
+    tok->at_bol = tok_at_bol;
+    tok->has_space = tok_has_space;
+    cur = cur->next = tok;
+    at_bol = false;
+    has_space = false;
   }
 
-  cur = cur->next = new_token(TK_EOF, p, p);
+  Token *eof = new_token(TK_EOF, p, p);
+  eof->at_bol = true;
+  cur = cur->next = eof;
   return head.next;
 }

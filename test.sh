@@ -68,6 +68,12 @@ assert_fail() {
   fi
 }
 
+# assert_include <expected> <program> <header-name> <header-body>
+assert_include() {
+  printf '%s\n' "$4" > "$WORK/$3"
+  assert "$1" "$2"
+}
+
 # --- build ---------------------------------------------------------------
 (cd "$ROOT" && ./build.sh) || { echo "build failed"; exit 1; }
 
@@ -279,6 +285,65 @@ assert 9 'struct Inner { int v; }; struct Outer { struct Inner in; int w; }; int
 assert 6 'struct P { int x; }; int main() { struct P a[3]; a[0].x=1; a[1].x=2; a[2].x=3; return a[0].x+a[1].x+a[2].x; }'
 assert 9 'struct P { int x; int y; }; struct P g; int main() { g.x=4; g.y=5; return g.x+g.y; }'
 assert 3 'struct Node { int val; struct Node *next; }; int main() { struct Node a; struct Node b; a.val=1; b.val=2; a.next=&b; return a.next->val + a.val; }'
+
+# step 16: preprocessor
+assert 5 '#define N 5
+int main() { return N; }'
+assert 7 '#define N 5
+#define M 2
+int main() { return N + M; }'
+assert 10 '#define ADD(a, b) ((a)+(b))
+int main() { return ADD(4, 6); }'
+assert 20 '#define SQ(x) ((x)*(x))
+int main() { return SQ(4)+4; }'
+assert 7 '#define INC(x) ((x)+1)
+int main() { return INC(INC(INC(4))); }'
+assert 12 '#define MAX(a, b) ((a) > (b) ? (a) : (b))
+int main() { return MAX(3, 12); }'
+assert 5 '#define X
+#ifdef X
+int main() { return 5; }
+#else
+int main() { return 9; }
+#endif'
+assert 9 '#ifndef X
+int main() { return 9; }
+#endif'
+assert 3 '#define N 3
+#if N > 2
+int main() { return 3; }
+#else
+int main() { return 4; }
+#endif'
+assert 4 '#define N 1
+#if N > 2
+int main() { return 3; }
+#elif N == 1
+int main() { return 4; }
+#else
+int main() { return 5; }
+#endif'
+assert 1 '#define X
+#undef X
+#ifdef X
+int main() { return 0; }
+#else
+int main() { return 1; }
+#endif'
+assert 7 '#define X 1
+#if defined(X) && X == 1
+int main() { return 7; }
+#endif'
+assert 27 '#define N 6
+int main() { int x = 3; return (N + x) * (N - x); }'
+assert_include 42 '#include "val.h"
+int main() { return VAL; }' val.h '#define VAL 42'
+assert_include 8 '#include "twice.h"
+#include "twice.h"
+int main() { return TWICE; }' twice.h '#ifndef TWICE_H
+#define TWICE_H
+#define TWICE 8
+#endif'
 
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
