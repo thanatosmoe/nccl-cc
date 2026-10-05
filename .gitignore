@@ -1,0 +1,7 @@
+ncclcc
+ncclcc.exe
+*.o
+*.obj
+*.exe
+*.tmp.s
+tmp
