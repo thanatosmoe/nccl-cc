@@ -77,6 +77,8 @@ typedef enum {
   ND_VAR,       // Variable (local or global)
   ND_ASSIGN,    // "="
   ND_COND,      // "?:" conditional
+  ND_ADDR,      // Unary "&"
+  ND_DEREF,     // Unary "*"
   ND_NEG,       // Unary minus
   ND_NOT,    // Logical negation
   ND_BITNOT, // Bitwise complement
@@ -98,14 +100,18 @@ typedef enum {
 
 // Type
 typedef enum {
-  TY_CHAR, // char
-  TY_INT,  // int
+  TY_CHAR,  // char
+  TY_INT,   // int
+  TY_PTR,   // pointer
+  TY_ARRAY, // array
 } TypeKind;
 
 typedef struct Type Type;
 struct Type {
   TypeKind kind; // Type kind
   int size;      // sizeof() value
+  Type *base;    // Pointer or array element type
+  int array_len; // Number of elements (TY_ARRAY)
 };
 
 extern Type *ty_char;

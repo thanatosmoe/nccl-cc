@@ -1,7 +1,7 @@
 #include "ncclcc.h"
 
-static Type char_type = {TY_CHAR, 1};
-static Type int_type = {TY_INT, 8};
+static Type char_type = {.kind = TY_CHAR, .size = 1};
+static Type int_type = {.kind = TY_INT, .size = 8};
 
 Type *ty_char = &char_type;
 Type *ty_int = &int_type;

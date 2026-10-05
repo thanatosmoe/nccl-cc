@@ -12,6 +12,7 @@ static Node *new_node(NodeKind kind) {
 static Node *new_unary(NodeKind kind, Node *expr) {
   Node *node = new_node(kind);
   node->lhs = expr;
+  node->ty = ty_int;
   return node;
 }
 
@@ -19,6 +20,7 @@ static Node *new_binary(NodeKind kind, Node *lhs, Node *rhs) {
   Node *node = new_node(kind);
   node->lhs = lhs;
   node->rhs = rhs;
+  node->ty = ty_int;
   return node;
 }
 
@@ -42,7 +44,17 @@ static char *token_str(Token *tok) {
   return s;
 }
 
-static int local_count;
+static int align_of(Type *ty) {
+  if (ty->kind == TY_ARRAY)
+    return align_of(ty->base);
+  return ty->size;
+}
+
+static int align_to(int n, int align) {
+  return (n + align - 1) / align * align;
+}
+
+static int frame_size;
 
 static bool same_name(Obj *var, Token *tok) {
   return var->len == tok->len && !memcmp(tok->loc, var->name, tok->len);
@@ -65,7 +77,8 @@ static Obj *new_var(Token *tok, Type *ty) {
   var->name = token_str(tok);
   var->len = tok->len;
   var->ty = ty;
-  var->offset = 8 * ++local_count;
+  frame_size = align_to(frame_size + ty->size, align_of(ty));
+  var->offset = frame_size;
   return var;
 }
 
@@ -102,6 +115,61 @@ static Type *declspec(Token **rest, Token *tok) {
   error_at(tok->loc, "expected a type name");
 }
 
+static Type *pointer_to(Type *base) {
+  Type *ty = calloc(1, sizeof(Type));
+  ty->kind = TY_PTR;
+  ty->size = 8;
+  ty->base = base;
+  return ty;
+}
+
+static Type *array_of(Type *base, int len) {
+  Type *ty = calloc(1, sizeof(Type));
+  ty->kind = TY_ARRAY;
+  ty->size = base->size * len;
+  ty->base = base;
+  ty->array_len = len;
+  return ty;
+}
+
+static bool is_integer(Type *ty) {
+  return ty->kind == TY_CHAR || ty->kind == TY_INT;
+}
+
+// type-suffix = ("[" num "]")*
+static Type *type_suffix(Token **rest, Token *tok, Type *ty) {
+  if (equal(tok, "[")) {
+    tok = tok->next;
+    // An unsized array (`int a[]`) is only allowed for parameters, where it
+    // decays to a pointer. Represent it as an array of length 0.
+    if (equal(tok, "]")) {
+      ty = type_suffix(rest, tok->next, ty);
+      return array_of(ty, 0);
+    }
+    if (tok->kind != TK_NUM)
+      error_at(tok->loc, "expected an array size");
+    int len = tok->val;
+    tok = skip(tok->next, "]");
+    ty = type_suffix(rest, tok, ty);
+    return array_of(ty, len);
+  }
+  *rest = tok;
+  return ty;
+}
+
+// declarator = "*"* ident type-suffix
+static Type *declarator(Token **rest, Token *tok, Type *ty, Token **name) {
+  while (equal(tok, "*")) {
+    ty = pointer_to(ty);
+    tok = tok->next;
+  }
+  if (tok->kind != TK_IDENT)
+    error_at(tok->loc, "expected a variable name");
+  *name = tok;
+  tok = tok->next;
+  return type_suffix(rest, tok, ty);
+}
+
 static Node *expr(Token **rest, Token *tok);
 static Node *assign(Token **rest, Token *tok);
 static Node *conditional(Token **rest, Token *tok);
@@ -115,6 +183,7 @@ static Node *relational(Token **rest, Token *tok);
 static Node *add(Token **rest, Token *tok);
 static Node *mul(Token **rest, Token *tok);
 static Node *unary(Token **rest, Token *tok);
+static Node *postfix(Token **rest, Token *tok);
 static Node *primary(Token **rest, Token *tok);
 static Node *declaration(Token **rest, Token *tok);
 
@@ -126,8 +195,11 @@ static Node *expr(Token **rest, Token *tok) {
 // assign = conditional ("=" assign)?
 static Node *assign(Token **rest, Token *tok) {
   Node *node = conditional(&tok, tok);
-  if (equal(tok, "="))
-    return new_binary(ND_ASSIGN, node, assign(rest, tok->next));
+  if (equal(tok, "=")) {
+    Node *as = new_binary(ND_ASSIGN, node, assign(rest, tok->next));
+    as->ty = node->ty;
+    return as;
+  }
   *rest = tok;
   return node;
 }
@@ -141,6 +213,7 @@ static Node *conditional(Token **rest, Token *tok) {
     cond->then = expr(&tok, tok->next);
     tok = skip(tok, ":");
     cond->els = conditional(&tok, tok);
+    cond->ty = cond->then->ty;
     *rest = tok;
     return cond;
   }
@@ -227,14 +300,62 @@ static Node *relational(Token **rest, Token *tok) {
   return node;
 }
 
+// Builds `lhs + rhs`, scaling the integer operand when one side is a pointer.
+static Node *new_add(Node *lhs, Node *rhs) {
+  if (is_integer(lhs->ty) && is_integer(rhs->ty)) {
+    Node *node = new_binary(ND_ADD, lhs, rhs);
+    node->ty = ty_int;
+    return node;
+  }
+  if (lhs->ty->base && rhs->ty->base)
+    error("invalid operands to '+'");
+
+  // Canonicalize so that the pointer is on the left.
+  if (!lhs->ty->base) {
+    Node *tmp = lhs;
+    lhs = rhs;
+    rhs = tmp;
+  }
+
+  Node *scaled = new_binary(ND_MUL, rhs, new_num(lhs->ty->base->size));
+  scaled->ty = ty_int;
+  Node *node = new_binary(ND_ADD, lhs, scaled);
+  node->ty = pointer_to(lhs->ty->base);
+  return node;
+}
+
+// Builds `lhs - rhs`, scaling pointers as needed.
+static Node *new_sub(Node *lhs, Node *rhs) {
+  if (is_integer(lhs->ty) && is_integer(rhs->ty)) {
+    Node *node = new_binary(ND_SUB, lhs, rhs);
+    node->ty = ty_int;
+    return node;
+  }
+
+  if (lhs->ty->base && rhs->ty->base) {
+    // Pointer difference: byte distance divided by the element size.
+    Node *diff = new_binary(ND_SUB, lhs, rhs);
+    diff->ty = ty_int;
+    Node *node = new_binary(ND_DIV, diff, new_num(lhs->ty->base->size));
+    node->ty = ty_int;
+    return node;
+  }
+
+  Node *scaled = new_binary(ND_MUL, rhs, new_num(lhs->ty->base->size));
+  scaled->ty = ty_int;
+  Node *node = new_binary(ND_SUB, lhs, scaled);
+  node->ty = pointer_to(lhs->ty->base);
+  return node;
+}
+
 // add = mul ("+" mul | "-" mul)*
 static Node *add(Token **rest, Token *tok) {
   Node *node = mul(&tok, tok);
   for (;;) {
     if (equal(tok, "+"))
-      node = new_binary(ND_ADD, node, mul(&tok, tok->next));
+      node = new_add(node, mul(&tok, tok->next));
     else if (equal(tok, "-"))
-      node = new_binary(ND_SUB, node, mul(&tok, tok->next));
+      node = new_sub(node, mul(&tok, tok->next));
     else
       break;
   }
@@ -259,17 +380,53 @@ static Node *mul(Token **rest, Token *tok) {
   return node;
 }
 
-// unary = ("+" | "-" | "!" | "~") unary | primary
+// unary = ("+" | "-" | "!" | "~" | "&" | "*") unary | postfix
 static Node *unary(Token **rest, Token *tok) {
   if (equal(tok, "+"))
     return unary(rest, tok->next);
-  if (equal(tok, "-"))
-    return new_unary(ND_NEG, unary(rest, tok->next));
-  if (equal(tok, "!"))
-    return new_unary(ND_NOT, unary(rest, tok->next));
-  if (equal(tok, "~"))
-    return new_unary(ND_BITNOT, unary(rest, tok->next));
-  return primary(rest, tok);
+  if (equal(tok, "-")) {
+    Node *node = new_unary(ND_NEG, unary(rest, tok->next));
+    node->ty = ty_int;
+    return node;
+  }
+  if (equal(tok, "!")) {
+    Node *node = new_unary(ND_NOT, unary(rest, tok->next));
+    node->ty = ty_int;
+    return node;
+  }
+  if (equal(tok, "~")) {
+    Node *node = new_unary(ND_BITNOT, unary(rest, tok->next));
+    node->ty = ty_int;
+    return node;
+  }
+  if (equal(tok, "&")) {
+    Node *node = new_unary(ND_ADDR, unary(rest, tok->next));
+    node->ty = pointer_to(node->lhs->ty);
+    return node;
+  }
+  if (equal(tok, "*")) {
+    Node *node = new_unary(ND_DEREF, unary(rest, tok->next));
+    if (!node->lhs->ty->base)
+      error_at(tok->loc, "invalid pointer dereference");
+    node->ty = node->lhs->ty->base;
+    return node;
+  }
+  return postfix(rest, tok);
+}
+
+// postfix = primary ("[" expr "]")*
+static Node *postfix(Token **rest, Token *tok) {
+  Node *node = primary(&tok, tok);
+  while (equal(tok, "[")) {
+    Node *idx = expr(&tok, tok->next);
+    tok = skip(tok, "]");
+    Node *add = new_add(node, idx);
+    Node *deref = new_unary(ND_DEREF, add);
+    deref->ty = add->ty->base; // will fail cleanly if not a pointer/array
+    node = deref;
+  }
+  *rest = tok;
+  return node;
 }
 
 // primary = "(" expr ")" | ident "(" (assign ("," assign)*)? ")" | ident | num
@@ -283,6 +440,7 @@ static Node *primary(Token **rest, Token *tok) {
   if (tok->kind == TK_IDENT && equal(tok->next, "(")) {
     Node *node = new_node(ND_FUNCALL);
     node->name = token_str(tok);
+    node->ty = ty_int;
     tok = tok->next->next;
 
     Node head = {0};
@@ -329,14 +487,12 @@ static Node *primary(Token **rest, Token *tok) {
   error_at(tok->loc, "expected an expression");
 }
 
-// global_decl = declspec ident ("=" num)?
+// global_decl = declspec declarator ("=" num)?
 static void global_decl(Token **rest, Token *tok) {
   Type *ty = declspec(&tok, tok);
-  if (tok->kind != TK_IDENT)
-    error_at(tok->loc, "expected a variable name");
-
-  Obj *var = new_gvar(tok, ty);
-  tok = tok->next;
+  Token *name;
+  ty = declarator(&tok, tok, ty, &name);
+  Obj *var = new_gvar(name, ty);
 
   if (equal(tok, "=")) {
     Node *node = expr(&tok, tok->next);
@@ -349,16 +505,16 @@ static void global_decl(Token **rest, Token *tok) {
   *rest = skip(tok, ";");
 }
 
-// declaration = declspec ident ("=" expr)?
+// declaration = declspec declarator ("=" expr)?
 static Node *declaration(Token **rest, Token *tok) {
   Type *ty = declspec(&tok, tok);
-  if (tok->kind != TK_IDENT)
-    error_at(tok->loc, "expected a variable name");
-
-  Obj *var = new_lvar(tok, ty);
-  tok = tok->next;
+  Token *name;
+  ty = declarator(&tok, tok, ty, &name);
+  Obj *var = new_lvar(name, ty);
 
   if (equal(tok, "=")) {
+    if (ty->kind == TY_ARRAY)
+      error_at(tok->loc, "array initializer is not supported yet");
     Node *lhs = new_var_node(var);
     Node *rhs = expr(&tok, tok->next);
     *rest = tok;
@@ -503,7 +659,7 @@ static Function *function(Token **rest, Token *tok) {
   tok = skip(tok, "(");
 
   locals = NULL;
-  local_count = 0;
+  frame_size = 0;
 
   Obj head = {0};
   Obj *cur = &head;
@@ -511,10 +667,11 @@ static Function *function(Token **rest, Token *tok) {
     if (cur != &head)
       tok = skip(tok, ",");
     Type *pty = declspec(&tok, tok);
-    if (tok->kind != TK_IDENT)
-      error_at(tok->loc, "expected a parameter name");
-    cur = cur->next = new_var(tok, pty);
-    tok = tok->next;
+    Token *pname;
+    pty = declarator(&tok, tok, pty, &pname);
+    if (pty->kind == TY_ARRAY)
+      pty = pointer_to(pty->base); // Array parameters decay to pointers.
+    cur = cur->next = new_var(pname, pty);
   }
   fn->params = head.next;
   locals = head.next; // Parameters are the initial local variables.
@@ -532,7 +689,7 @@ static Function *function(Token **rest, Token *tok) {
 
   fn->body = bhead.next;
   fn->locals = locals;
-  fn->stack_size = local_count * 8;
+  fn->stack_size = frame_size;
   *rest = tok;
   return fn;
 }
@@ -544,7 +701,7 @@ Function *parse(Token *tok) {
 
   while (tok->kind != TK_EOF) {
     locals = NULL;
-    local_count = 0;
+    frame_size = 0;
     if (is_function(tok))
       cur = cur->next = function(&tok, tok);
     else

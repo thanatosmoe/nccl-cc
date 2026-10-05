@@ -237,6 +237,18 @@ assert 1 'int main() { return printf("%c", 65); }'
 assert 1 'int main() { char c = 65; return printf("%c", c); }'
 assert 12 'int main() { return printf("hello %s\n", "world"); }'
 
+# step 13: arrays
+assert 6 'int main() { int a[3]; a[0]=1; a[1]=2; a[2]=3; return a[0]+a[1]+a[2]; }'
+assert 10 'int main() { int a[3]; a[2]=10; return a[2]; }'
+assert 6 'int main() { int a[2][3]; a[0][0]=1; a[0][1]=2; a[1][2]=3; return a[0][0]+a[0][1]+a[1][2]; }'
+assert 5 'int main() { int a[2][3]; a[1][1]=5; return a[1][1]; }'
+assert 16 'int main() { int a[5]; for (int i=0;i<5;i=i+1) a[i]=i*i; return a[4]; }'
+assert 30 'int main() { int a[5]; for (int i=0;i<5;i=i+1) a[i]=i*i; return a[0]+a[1]+a[2]+a[3]+a[4]; }'
+assert 195 "int main() { char s[4]; s[0]='a'; s[1]='b'; return s[0]+s[1]; }"
+assert 5 'int g[3]; int main() { g[2]=5; return g[2]; }'
+assert 6 'int sum(int a[], int n) { int s=0; for (int i=0;i<n;i=i+1) s=s+a[i]; return s; } int main() { int a[3]; a[0]=1;a[1]=2;a[2]=3; return sum(a,3); }'
+assert 36 'int main() { int a[3][3]; int n=0; for (int i=0;i<3;i=i+1) for (int j=0;j<3;j=j+1) { a[i][j]=i*3+j; n=n+a[i][j]; } return n; }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
 assert_fail 'int main() { return -; }'

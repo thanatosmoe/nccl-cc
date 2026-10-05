@@ -44,6 +44,10 @@ static void gen_addr(Node *node) {
       fprintf(out, "  lea -%d(%%rbp), %%rax\n", node->var->offset);
     return;
   }
+  if (node->kind == ND_DEREF) {
+    gen_expr(node->lhs);
+    return;
+  }
   error("not an lvalue");
 }
 
@@ -91,7 +95,21 @@ static void gen_expr(Node *node) {
     return;
   case ND_VAR:
     gen_addr(node);
+    if (node->var->ty->kind == TY_ARRAY)
+      return; // Arrays evaluate to their address.
     if (node->var->ty->size == 1)
+      fprintf(out, "  movsbl (%%rax), %%eax\n");
+    else
+      fprintf(out, "  mov (%%rax), %%rax\n");
+    return;
+  case ND_ADDR:
+    gen_addr(node->lhs);
+    return;
+  case ND_DEREF:
+    gen_expr(node->lhs);
+    if (node->ty->kind == TY_ARRAY)
+      return; // Address of the first element.
+    if (node->ty->size == 1)
       fprintf(out, "  movsbl (%%rax), %%eax\n");
     else
       fprintf(out, "  mov (%%rax), %%rax\n");
@@ -310,15 +328,23 @@ static void gen_function(Function *fn) {
 
   // Copy incoming arguments into their stack slots.
   static char *argreg[] = {"%rcx", "%rdx", "%r8", "%r9"};
+  static char *argreg8[] = {"%cl", "%dl", "%r8b", "%r9b"};
   int i = 0;
   for (Obj *var = fn->params; var; var = var->next) {
+    int size = var->ty->size;
     if (i < 4) {
-      fprintf(out, "  mov %s, -%d(%%rbp)\n", argreg[i], var->offset);
+      if (size == 1)
+        fprintf(out, "  mov %s, -%d(%%rbp)\n", argreg8[i], var->offset);
+      else
+        fprintf(out, "  mov %s, -%d(%%rbp)\n", argreg[i], var->offset);
     } else {
       // [rbp+0]=saved rbp, [rbp+8]=return address, [rbp+16..47]=shadow space,
       // so the 5th argument starts at [rbp+48].
       fprintf(out, "  mov %d(%%rbp), %%rax\n", 48 + 8 * (i - 4));
-      fprintf(out, "  mov %%rax, -%d(%%rbp)\n", var->offset);
+      if (size == 1)
+        fprintf(out, "  mov %%al, -%d(%%rbp)\n", var->offset);
+      else
+        fprintf(out, "  mov %%rax, -%d(%%rbp)\n", var->offset);
     }
     i++;
   }
@@ -341,7 +367,9 @@ void codegen(Function *prog, FILE *outfile) {
     for (Obj *var = globals; var; var = var->next) {
       fprintf(out, "  .globl %s\n", var->name);
       fprintf(out, "%s:\n", var->name);
-      if (var->ty->size == 1)
+      if (var->ty->kind == TY_ARRAY)
+        fprintf(out, "  .zero %d\n", var->ty->size);
+      else if (var->ty->size == 1)
         fprintf(out, "  .byte %ld\n", var->has_init ? var->init_val : 0);
       else
         fprintf(out, "  .quad %ld\n", var->has_init ? var->init_val : 0);
