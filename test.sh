@@ -132,6 +132,14 @@ assert 17 'int main() { int a = 10; int b = 7; a; b; return a+b; }'
 assert 3 'int main() { int a = 3; a; return a; }'
 assert 10 'int main() { int a = 1; int b = 2; int c = 3; int d = 4; return a+b+c+d; }'
 
+# step 6: global variables
+assert 0 'int g; int main() { return g; }'
+assert 3 'int g = 3; int main() { return g; }'
+assert 7 'int a = 1; int b = 6; int main() { return a+b; }'
+assert 3 'int g = 3; int main() { int a = g; return a; }'
+assert 21 'int g = 10; int main() { return g*2+1; }'
+assert 42 'int g = 42; int main() { int g = 1; return g + 41; }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
 assert_fail 'int main() { return -; }'

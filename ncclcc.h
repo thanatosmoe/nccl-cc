@@ -63,7 +63,7 @@ typedef enum {
   ND_RETURN,    // "return" statement
   ND_EXPR_STMT, // Expression statement
   ND_NUM,       // Integer literal
-  ND_LVAR,      // Local variable
+  ND_VAR,       // Variable (local or global)
   ND_ASSIGN,    // "="
   ND_NEG,       // Unary minus
   ND_NOT,    // Logical negation
@@ -84,16 +84,20 @@ typedef enum {
   ND_LOGOR,  // ||
 } NodeKind;
 
-// Variable (local for now).
+// Variable.
 typedef struct Obj Obj;
 struct Obj {
-  Obj *next;  // Next variable
-  char *name; // Variable name
-  int len;    // Name length
-  int offset; // Offset from %rbp
+  Obj *next;      // Next variable
+  char *name;     // Variable name
+  int len;        // Name length
+  bool is_global; // True if a global variable
+  bool has_init;  // True if a global has an initializer
+  int offset;     // Offset from %rbp (locals)
+  long init_val;  // Initial value (globals)
 };
 
 extern Obj *locals;
+extern Obj *globals;
 
 // AST node type
 typedef struct Node Node;
@@ -102,7 +106,7 @@ struct Node {
   Node *next;    // Next node
   Node *lhs;     // Left-hand side
   Node *rhs;     // Right-hand side
-  Obj *var;      // Used if kind == ND_LVAR or ND_ASSIGN
+  Obj *var;      // Used if kind == ND_VAR
   long val;      // Used if kind == ND_NUM
 };
 

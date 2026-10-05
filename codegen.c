@@ -30,8 +30,11 @@ static void gen_stmt(Node *node);
 
 // Computes the address of an lvalue into rax.
 static void gen_addr(Node *node) {
-  if (node->kind == ND_LVAR) {
-    fprintf(out, "  lea -%d(%%rbp), %%rax\n", node->var->offset);
+  if (node->kind == ND_VAR) {
+    if (node->var->is_global)
+      fprintf(out, "  lea %s(%%rip), %%rax\n", node->var->name);
+    else
+      fprintf(out, "  lea -%d(%%rbp), %%rax\n", node->var->offset);
     return;
   }
   error("not an lvalue");
@@ -42,7 +45,7 @@ static void gen_expr(Node *node) {
   case ND_NUM:
     fprintf(out, "  mov $%ld, %%rax\n", node->val);
     return;
-  case ND_LVAR:
+  case ND_VAR:
     gen_addr(node);
     fprintf(out, "  mov (%%rax), %%rax\n");
     return;
@@ -178,6 +181,15 @@ void codegen(Node *node, FILE *outfile) {
 
   // Keep the stack 16-byte aligned at every call site.
   int frame = (nlocals * 8 + 15) / 16 * 16;
+
+  if (globals) {
+    fprintf(out, "  .data\n");
+    for (Obj *var = globals; var; var = var->next) {
+      fprintf(out, "  .globl %s\n", var->name);
+      fprintf(out, "%s:\n", var->name);
+      fprintf(out, "  .quad %ld\n", var->has_init ? var->init_val : 0);
+    }
+  }
 
   fprintf(out, "  .text\n");
   fprintf(out, "  .globl main\n");

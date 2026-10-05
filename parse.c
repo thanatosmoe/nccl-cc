@@ -1,6 +1,7 @@
 #include "ncclcc.h"
 
 Obj *locals;
+Obj *globals;
 
 static Node *new_node(NodeKind kind) {
   Node *node = calloc(1, sizeof(Node));
@@ -28,7 +29,7 @@ static Node *new_num(long val) {
 }
 
 static Node *new_var_node(Obj *var) {
-  Node *node = new_node(ND_LVAR);
+  Node *node = new_node(ND_VAR);
   node->var = var;
   return node;
 }
@@ -41,10 +42,17 @@ static char *token_str(Token *tok) {
 
 static int local_count;
 
-// Finds a local variable by name, or NULL.
-static Obj *find_lvar(Token *tok) {
+static bool same_name(Obj *var, Token *tok) {
+  return var->len == tok->len && !memcmp(tok->loc, var->name, tok->len);
+}
+
+// Finds a variable by name (locals take precedence over globals).
+static Obj *find_var(Token *tok) {
   for (Obj *var = locals; var; var = var->next)
-    if (var->len == tok->len && !memcmp(tok->loc, var->name, tok->len))
+    if (same_name(var, tok))
+      return var;
+  for (Obj *var = globals; var; var = var->next)
+    if (same_name(var, tok))
       return var;
   return NULL;
 }
@@ -57,6 +65,17 @@ static Obj *new_lvar(Token *tok) {
   var->offset = 8 * ++local_count;
   var->next = locals;
   locals = var;
+  return var;
+}
+
+// Declares a new global variable.
+static Obj *new_gvar(Token *tok) {
+  Obj *var = calloc(1, sizeof(Obj));
+  var->name = token_str(tok);
+  var->len = tok->len;
+  var->is_global = true;
+  var->next = globals;
+  globals = var;
   return var;
 }
 
@@ -211,7 +230,7 @@ static Node *primary(Token **rest, Token *tok) {
   }
 
   if (tok->kind == TK_IDENT) {
-    Obj *var = find_lvar(tok);
+    Obj *var = find_var(tok);
     if (!var)
       error_at(tok->loc, "undefined variable");
     *rest = tok->next;
@@ -227,29 +246,28 @@ static Node *primary(Token **rest, Token *tok) {
   error_at(tok->loc, "expected an expression");
 }
 
-// decl = "int" ident ("=" expr)?
-static Node *decl(Token **rest, Token *tok) {
+// global_decl = "int" ident ("=" num)?
+static void global_decl(Token **rest, Token *tok) {
   tok = skip(tok, "int");
   if (tok->kind != TK_IDENT)
     error_at(tok->loc, "expected a variable name");
-  Obj *var = new_lvar(tok);
+
+  Obj *var = new_gvar(tok);
   tok = tok->next;
 
   if (equal(tok, "=")) {
-    Node *lhs = new_var_node(var);
-    Node *rhs = expr(&tok, tok->next);
-    *rest = skip(tok, ";");
-    Node *node = new_node(ND_EXPR_STMT);
-    node->lhs = new_binary(ND_ASSIGN, lhs, rhs);
-    return node;
+    Node *node = expr(&tok, tok->next);
+    if (node->kind != ND_NUM)
+      error_at(tok->loc, "global initializer must be a constant");
+    var->init_val = node->val;
+    var->has_init = true;
   }
 
   *rest = skip(tok, ";");
-  return NULL;
 }
 
 // stmt = "return" expr ";"
-//      | decl
+//      | "int" ident ("=" expr)? ";"
 //      | expr ";"
 static Node *stmt(Token **rest, Token *tok) {
   if (equal(tok, "return")) {
@@ -259,8 +277,25 @@ static Node *stmt(Token **rest, Token *tok) {
     return node;
   }
 
-  if (equal(tok, "int"))
-    return decl(rest, tok);
+  if (equal(tok, "int")) {
+    tok = skip(tok, "int");
+    if (tok->kind != TK_IDENT)
+      error_at(tok->loc, "expected a variable name");
+    Obj *var = new_lvar(tok);
+    tok = tok->next;
+
+    if (equal(tok, "=")) {
+      Node *lhs = new_var_node(var);
+      Node *rhs = expr(&tok, tok->next);
+      *rest = skip(tok, ";");
+      Node *node = new_node(ND_EXPR_STMT);
+      node->lhs = new_binary(ND_ASSIGN, lhs, rhs);
+      return node;
+    }
+
+    *rest = skip(tok, ";");
+    return NULL;
+  }
 
   Node *node = new_node(ND_EXPR_STMT);
   node->lhs = expr(&tok, tok);
@@ -268,8 +303,16 @@ static Node *stmt(Token **rest, Token *tok) {
   return node;
 }
 
-// program = "int" "main" "(" ")" "{" stmt* "}"
+static bool is_function(Token *tok) {
+  return equal(tok, "int") && tok->next->kind == TK_IDENT &&
+         equal(tok->next->next, "(");
+}
+
+// program = global_decl* "int" "main" "(" ")" "{" stmt* "}"
 Node *parse(Token *tok) {
+  while (equal(tok, "int") && !is_function(tok))
+    global_decl(&tok, tok);
+
   tok = skip(tok, "int");
   tok = skip(tok, "main");
   tok = skip(tok, "(");
@@ -280,9 +323,8 @@ Node *parse(Token *tok) {
   Node *cur = &head;
   while (!equal(tok, "}")) {
     Node *node = stmt(&tok, tok);
-    if (node) {
+    if (node)
       cur = cur->next = node;
-    }
   }
   skip(tok, "}");
   return head.next;
