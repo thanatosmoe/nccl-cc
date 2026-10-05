@@ -79,6 +79,7 @@ typedef enum {
   ND_COND,      // "?:" conditional
   ND_ADDR,      // Unary "&"
   ND_DEREF,     // Unary "*"
+  ND_MEMBER,    // "." or "->"
   ND_NEG,       // Unary minus
   ND_NOT,    // Logical negation
   ND_BITNOT, // Bitwise complement
@@ -100,18 +101,32 @@ typedef enum {
 
 // Type
 typedef enum {
-  TY_CHAR,  // char
-  TY_INT,   // int
-  TY_PTR,   // pointer
-  TY_ARRAY, // array
+  TY_CHAR,   // char
+  TY_INT,    // int
+  TY_PTR,    // pointer
+  TY_ARRAY,  // array
+  TY_STRUCT, // struct
 } TypeKind;
 
 typedef struct Type Type;
+
+// Struct member.
+typedef struct Member Member;
+struct Member {
+  Member *next;
+  Type *ty;    // Member type
+  char *name;  // Member name
+  int offset;  // Offset from the start of the struct
+};
+
 struct Type {
   TypeKind kind; // Type kind
   int size;      // sizeof() value
   Type *base;    // Pointer or array element type
   int array_len; // Number of elements (TY_ARRAY)
+  Member *members; // Members (TY_STRUCT)
+  char *tag;       // Struct tag name
+  Type *next;      // Next entry in the struct tag list
 };
 
 extern Type *ty_char;
@@ -162,7 +177,8 @@ struct Node {
   char *name;    // Used if kind == ND_FUNCALL
   Obj *var;      // Used if kind == ND_VAR
   Type *ty;      // Result type
-  StringLit *str; // Used if kind == ND_STR
+  StringLit *str;  // Used if kind == ND_STR
+  Member *member;  // Used if kind == ND_MEMBER
   long val;      // Used if kind == ND_NUM
 };
 

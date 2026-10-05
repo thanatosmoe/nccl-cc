@@ -35,6 +35,37 @@ static void emit_cmp(char *setcc) {
 static void gen_expr(Node *node);
 static void gen_stmt(Node *node);
 
+// Loads a value of type `ty` from the address in rax.
+static void load(Type *ty) {
+  if (ty->kind == TY_ARRAY || ty->kind == TY_STRUCT)
+    return; // Aggregates evaluate to their address.
+  if (ty->size == 1)
+    fprintf(out, "  movsbl (%%rax), %%eax\n");
+  else
+    fprintf(out, "  mov (%%rax), %%rax\n");
+}
+
+// Stores rax into the address in rdi, according to `ty`.
+static void store(Type *ty) {
+  if (ty->kind == TY_STRUCT) {
+    int sz = ty->size;
+    int i = 0;
+    for (; i + 8 <= sz; i += 8) {
+      fprintf(out, "  mov %d(%%rax), %%rcx\n", i);
+      fprintf(out, "  mov %%rcx, %d(%%rdi)\n", i);
+    }
+    for (; i < sz; i++) {
+      fprintf(out, "  movzbl %d(%%rax), %%ecx\n", i);
+      fprintf(out, "  mov %%cl, %d(%%rdi)\n", i);
+    }
+    return;
+  }
+  if (ty->size == 1)
+    fprintf(out, "  mov %%al, (%%rdi)\n");
+  else
+    fprintf(out, "  mov %%rax, (%%rdi)\n");
+}
+
 // Computes the address of an lvalue into rax.
 static void gen_addr(Node *node) {
   if (node->kind == ND_VAR) {
@@ -46,6 +77,12 @@ static void gen_addr(Node *node) {
   }
   if (node->kind == ND_DEREF) {
     gen_expr(node->lhs);
+    return;
+  }
+  if (node->kind == ND_MEMBER) {
+    gen_addr(node->lhs);
+    if (node->member->offset)
+      fprintf(out, "  add $%d, %%rax\n", node->member->offset);
     return;
   }
   error("not an lvalue");
@@ -95,24 +132,18 @@ static void gen_expr(Node *node) {
     return;
   case ND_VAR:
     gen_addr(node);
-    if (node->var->ty->kind == TY_ARRAY)
-      return; // Arrays evaluate to their address.
-    if (node->var->ty->size == 1)
-      fprintf(out, "  movsbl (%%rax), %%eax\n");
-    else
-      fprintf(out, "  mov (%%rax), %%rax\n");
+    load(node->var->ty);
+    return;
+  case ND_MEMBER:
+    gen_addr(node);
+    load(node->ty);
     return;
   case ND_ADDR:
     gen_addr(node->lhs);
     return;
   case ND_DEREF:
     gen_expr(node->lhs);
-    if (node->ty->kind == TY_ARRAY)
-      return; // Address of the first element.
-    if (node->ty->size == 1)
-      fprintf(out, "  movsbl (%%rax), %%eax\n");
-    else
-      fprintf(out, "  mov (%%rax), %%rax\n");
+    load(node->ty);
     return;
   case ND_STR:
     fprintf(out, "  lea .L.str.%d(%%rip), %%rax\n", node->str->id);
@@ -122,10 +153,7 @@ static void gen_expr(Node *node) {
     push();
     gen_expr(node->rhs);
     pop("%rdi");
-    if (node->lhs->ty->size == 1)
-      fprintf(out, "  mov %%al, (%%rdi)\n");
-    else
-      fprintf(out, "  mov %%rax, (%%rdi)\n");
+    store(node->lhs->ty);
     return;
   case ND_FUNCALL:
     gen_funcall(node);
@@ -367,7 +395,7 @@ void codegen(Function *prog, FILE *outfile) {
     for (Obj *var = globals; var; var = var->next) {
       fprintf(out, "  .globl %s\n", var->name);
       fprintf(out, "%s:\n", var->name);
-      if (var->ty->kind == TY_ARRAY)
+      if (var->ty->kind == TY_ARRAY || var->ty->kind == TY_STRUCT)
         fprintf(out, "  .zero %d\n", var->ty->size);
       else if (var->ty->size == 1)
         fprintf(out, "  .byte %ld\n", var->has_init ? var->init_val : 0);

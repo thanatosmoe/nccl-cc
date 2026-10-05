@@ -268,6 +268,18 @@ assert 1 'int main() { char s[3]; char *p = s; p[0] = 1; return s[0]; }'
 assert 5 'int main() { char s[6]; s[0]=104; s[1]=101; s[2]=108; s[3]=108; s[4]=111; s[5]=0; return printf("%s", s); }'
 assert 14 'int main() { int a[4]; int *p = a; for (int i=0;i<4;i=i+1) *(p+i) = i*i; int s=0; for (int i=0;i<4;i=i+1) s=s+p[i]; return s; }'
 
+# step 15: structs
+assert 3 'struct P { int x; int y; }; int main() { struct P p; p.x = 1; p.y = 2; return p.x + p.y; }'
+assert 30 'struct P { int x; int y; }; int main() { struct P p; p.x = 10; p.y = 20; return p.x + p.y; }'
+assert 7 'struct P { int x; int y; }; int main() { struct P p; struct P *q = &p; q->x = 3; q->y = 4; return q->x + q->y; }'
+assert 5 'struct P { int x; int y; }; int main() { struct P p; p.x = 5; struct P q; q = p; return q.x; }'
+assert 4 'struct P { int x; int y; }; int f(struct P *p) { return p->x - p->y; } int main() { struct P p; p.x = 9; p.y = 5; return f(&p); }'
+assert 12 'struct S { int a; char b; int c; }; int main() { struct S s; s.a=1; s.b=2; s.c=3; return s.a + s.b + s.c + 6; }'
+assert 9 'struct Inner { int v; }; struct Outer { struct Inner in; int w; }; int main() { struct Outer o; o.in.v = 4; o.w = 5; return o.in.v + o.w; }'
+assert 6 'struct P { int x; }; int main() { struct P a[3]; a[0].x=1; a[1].x=2; a[2].x=3; return a[0].x+a[1].x+a[2].x; }'
+assert 9 'struct P { int x; int y; }; struct P g; int main() { g.x=4; g.y=5; return g.x+g.y; }'
+assert 3 'struct Node { int val; struct Node *next; }; int main() { struct Node a; struct Node b; a.val=1; b.val=2; a.next=&b; return a.next->val + a.val; }'
+
 assert_fail 'int main() { return ; }'
 assert_fail 'int main() { return x; }'
 assert_fail 'int main() { return -; }'
